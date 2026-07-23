@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.5
+// Version: 1.1.6
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.5';
+const VERSION = '1.1.6';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -159,9 +159,9 @@ class SceneManagerCard extends HTMLElement {
           .scene-btn.being-edited { border: 2px solid #4CAF50 !important; box-shadow: 0 0 15px rgba(76, 175, 80, 0.5) !important; transform: scale(0.98); }
           .color-wrapper { position: relative; width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; overflow: hidden; border: 1px solid var(--divider-color, #ccc); cursor: pointer; box-sizing: border-box; }
           input[type="color"] { -webkit-appearance: none; border: none; width: 200%; height: 200%; cursor: pointer; transform: translate(-25%, -25%); padding: 0; background: none; }
-          .input-row { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; margin-top: 15px; }
-          input[type=text] { flex: 1; height: 48px; padding: 0 12px; border: 1px solid var(--divider-color, #ccc); background: var(--secondary-background-color); color: var(--primary-text-color); border-radius: 8px; font-size: 16px; box-sizing: border-box; }
-          button.save-btn-action { background-color: var(--primary-color, #03a9f4); color: white; border: none; border-radius: 8px; height: 48px; width: 48px; min-width: 48px; padding: 0; cursor: pointer; font-weight: bold; font-size: 24px; transition: background 0.3s; display: flex; align-items: center; justify-content: center; }
+          .input-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 10px; margin-bottom: 15px; align-items: center; margin-top: 15px; width: 100%; box-sizing: border-box; }
+          input[type=text] { width: 100%; min-width: 0; height: 48px; padding: 0 12px; border: 1px solid var(--divider-color, #ccc); background: var(--secondary-background-color); color: var(--primary-text-color); border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+          button.save-btn-action { background-color: var(--primary-color, #03a9f4); color: white; border: none; border-radius: 8px; height: 48px; width: 48px; min-width: 48px; padding: 0; cursor: pointer; font-weight: bold; font-size: 24px; transition: background 0.3s; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
           button.save-btn-action.save-mode { background-color: #4CAF50; }
           .style-filled { background: var(--scene-manager-btn-bg, var(--secondary-background-color, #eee)); border: 1px solid var(--divider-color, #eee); box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
           .style-outline { background: transparent; border: 2px solid var(--btn-icon-color); color: var(--primary-text-color); }
@@ -208,6 +208,12 @@ class SceneManagerCard extends HTMLElement {
           .live-mode-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
           .live-mode-state { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
           .live-mode-switch { flex: 0 0 auto; }
+          @media (max-width: 390px) {
+            #creationArea.open { padding: 12px; }
+            .input-row { grid-template-columns: 42px minmax(0, 1fr) 42px; gap: 8px; }
+            .color-wrapper, button.save-btn-action { width: 42px; height: 42px; min-width: 42px; }
+            input[type=text] { height: 42px; font-size: 15px; padding: 0 10px; }
+          }
           .icon-picker { display: flex; gap: 10px; overflow-x: auto; padding: 8px 4px 15px 4px; scrollbar-width: thin; }
           .icon-option { background: var(--secondary-background-color, #eee); color: var(--primary-text-color); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border: 2px solid transparent; transition: all 0.2s; }
           .icon-option.selected { background: var(--card-background-color, white); color: var(--primary-color); border-color: var(--primary-color); transform: scale(1.15); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
