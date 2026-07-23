@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.0
+// Version: 1.1.1
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -61,6 +61,8 @@ class SceneManagerCard extends HTMLElement {
                 this._updateContent();
                 this.shouldUpdate = false;
             }
+
+            this._updateLiveModeControl();
         }
     }
 
@@ -193,6 +195,20 @@ class SceneManagerCard extends HTMLElement {
           input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color); cursor: pointer; }
           .light-toggle { cursor: pointer; color: var(--disabled-text-color, #bdbdbd); }
           .light-toggle.on { color: var(--primary-color, #ff9800); }
+          .live-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--divider-color, #eee); border-radius: 8px; background: rgba(var(--rgb-primary-color), 0.04); }
+          .live-mode-label { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--primary-text-color); }
+          .live-mode-label ha-icon { color: var(--secondary-text-color); }
+          .live-mode-row.is-on .live-mode-label ha-icon { color: var(--primary-color); }
+          .live-mode-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+          .live-mode-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
+          .live-mode-state { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
+          .live-switch { position: relative; width: 44px; height: 24px; flex: 0 0 44px; display: inline-flex; align-items: center; cursor: pointer; }
+          .live-switch input { opacity: 0; width: 0; height: 0; }
+          .live-slider { position: absolute; inset: 0; border-radius: 999px; background: var(--disabled-text-color, #bdbdbd); transition: background 0.2s; }
+          .live-slider::before { content: ""; position: absolute; width: 20px; height: 20px; left: 2px; top: 2px; border-radius: 50%; background: var(--card-background-color, white); box-shadow: 0 1px 3px rgba(0,0,0,0.25); transition: transform 0.2s; }
+          .live-switch input:checked + .live-slider { background: var(--primary-color, #03a9f4); }
+          .live-switch input:checked + .live-slider::before { transform: translateX(20px); }
+          .live-switch input:disabled + .live-slider { opacity: 0.55; cursor: wait; }
           .icon-picker { display: flex; gap: 10px; overflow-x: auto; padding: 8px 4px 15px 4px; scrollbar-width: thin; }
           .icon-option { background: var(--secondary-background-color, #eee); color: var(--primary-text-color); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border: 2px solid transparent; transition: all 0.2s; }
           .icon-option.selected { background: var(--card-background-color, white); color: var(--primary-color); border-color: var(--primary-color); transform: scale(1.15); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
@@ -207,6 +223,19 @@ class SceneManagerCard extends HTMLElement {
           <div id="headerContainer"></div>
           <div class="scene-list" id="sceneList"></div>
           <div id="creationArea">
+            <div class="live-mode-row" id="liveModeRow">
+              <div class="live-mode-label">
+                <ha-icon icon="mdi:flash"></ha-icon>
+                <div class="live-mode-text">
+                  <span class="live-mode-title">Mode live</span>
+                  <span class="live-mode-state" id="liveModeState">Désactivé</span>
+                </div>
+              </div>
+              <label class="live-switch" title="Activer ou désactiver le mode live">
+                <input type="checkbox" id="liveModeToggle">
+                <span class="live-slider"></span>
+              </label>
+            </div>
             <div id="mainLightsContainer"></div>
             <div class="icon-picker" id="iconList"></div>
             <div class="input-row">
@@ -230,6 +259,9 @@ class SceneManagerCard extends HTMLElement {
         this.saveBtn = this.shadowRoot.getElementById("saveBtn");
         this.creationArea = this.shadowRoot.getElementById("creationArea");
         this.mainLightsContainer = this.shadowRoot.getElementById("mainLightsContainer");
+        this.liveModeRow = this.shadowRoot.getElementById("liveModeRow");
+        this.liveModeToggle = this.shadowRoot.getElementById("liveModeToggle");
+        this.liveModeState = this.shadowRoot.getElementById("liveModeState");
 
         this._renderHeader();
         this._renderIconPicker();
@@ -247,6 +279,8 @@ class SceneManagerCard extends HTMLElement {
             this.currentColor = e.target.value;
             if (this.editingId) this._updateContent();
         }, { passive: true });
+        this.liveModeToggle.addEventListener("change", (e) => this._setLiveMode(e.target.checked));
+        this._updateLiveModeControl();
     }
 
     _createFakeButtons() {
@@ -509,6 +543,43 @@ class SceneManagerCard extends HTMLElement {
         const entityId = this._liveModeEntityId();
         const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
         return stateObj && stateObj.state === "on";
+    }
+    _liveModeSwitchEnabled() {
+        const entityId = this._liveModeEntityId();
+        const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
+        return !!(stateObj && stateObj.state === "on");
+    }
+    _updateLiveModeControl() {
+        if (!this.liveModeRow || !this.liveModeToggle || !this.liveModeState) return;
+        const visible = this._respectLiveMode();
+        this.liveModeRow.style.display = visible ? "flex" : "none";
+        if (!visible) return;
+
+        const isOn = this._liveModeSwitchEnabled();
+        this.liveModeToggle.checked = isOn;
+        this.liveModeRow.classList.toggle("is-on", isOn);
+        this.liveModeState.textContent = isOn ? "Activé" : "Désactivé";
+        this.liveModeToggle.title = isOn ? "Désactiver le mode live" : "Activer le mode live";
+    }
+    async _setLiveMode(enabled) {
+        if (!this._hass) return;
+        this.liveModeToggle.disabled = true;
+        try {
+            await this._hass.callService("scene_manager", "set_live_mode", { enabled });
+        } catch (err) {
+            console.warn("scene-manager: set_live_mode failed, falling back to switch service", err);
+            const entityId = this._liveModeEntityId();
+            const service = enabled ? "turn_on" : "turn_off";
+            try {
+                await this._hass.callService("switch", service, { entity_id: entityId });
+            } catch (fallbackErr) {
+                console.error("scene-manager: live mode switch update failed", fallbackErr);
+                this.liveModeToggle.checked = !enabled;
+            }
+        } finally {
+            this.liveModeToggle.disabled = false;
+            this._updateLiveModeControl();
+        }
     }
     _actionSource() {
         const source = this.config && this.config.action_source;
