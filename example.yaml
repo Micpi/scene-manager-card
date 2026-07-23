@@ -1,0 +1,4 @@
+type: custom:scene-manager-card
+title: Mes scenes
+icon: mdi:home-floor-1
+activation_transition: 2

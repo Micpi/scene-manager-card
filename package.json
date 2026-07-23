@@ -1,0 +1,11 @@
+{
+  "name": "scene-manager-card",
+  "version": "1.0.18",
+  "private": true,
+  "description": "Scene Manager Ultimate Lovelace card for Home Assistant",
+  "license": "MIT",
+  "scripts": {
+    "build": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('scene-manager-card.js','dist/scene-manager-card.js');console.log('dist/scene-manager-card.js generated');\"",
+    "watch": "node -e \"console.log('Watch mode: use your editor/terminal watcher tooling for this card.');\""
+  }
+}
