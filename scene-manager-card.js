@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.1
+// Version: 1.1.2
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -129,6 +129,9 @@ class SceneManagerCard extends HTMLElement {
         this.shouldUpdate = true;
         this._lastStorageUpdate = null;
         this._lastStorageRoom = null;
+        this._liveModeOptimistic = null;
+        this._liveModePending = false;
+        this._liveModeOptimisticTimer = null;
 
         this.shadowRoot.innerHTML = `
         <style>
@@ -540,14 +543,22 @@ class SceneManagerCard extends HTMLElement {
     }
     _liveModeEnabled() {
         if (!this._respectLiveMode()) return true;
+        return this._liveModeSwitchEnabled();
+    }
+    _liveModeActualEnabled() {
         const entityId = this._liveModeEntityId();
         const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
-        return stateObj && stateObj.state === "on";
+        if (stateObj) return stateObj.state === "on";
+
+        const registry = this._hass && this._hass.states ? this._hass.states[this._getStorageEntityId()] : null;
+        const liveMode = registry && registry.attributes ? registry.attributes.live_mode : null;
+        if (typeof liveMode === "boolean") return liveMode;
+        if (typeof liveMode === "string") return ["on", "true", "1", "yes"].includes(liveMode.toLowerCase());
+        return null;
     }
     _liveModeSwitchEnabled() {
-        const entityId = this._liveModeEntityId();
-        const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
-        return !!(stateObj && stateObj.state === "on");
+        if (this._liveModeOptimistic !== null) return this._liveModeOptimistic;
+        return this._liveModeActualEnabled() === true;
     }
     _updateLiveModeControl() {
         if (!this.liveModeRow || !this.liveModeToggle || !this.liveModeState) return;
@@ -555,15 +566,30 @@ class SceneManagerCard extends HTMLElement {
         this.liveModeRow.style.display = visible ? "flex" : "none";
         if (!visible) return;
 
+        const actual = this._liveModeActualEnabled();
+        if (this._liveModeOptimistic !== null && actual === this._liveModeOptimistic) {
+            this._liveModeOptimistic = null;
+            this._liveModePending = false;
+            if (this._liveModeOptimisticTimer) {
+                clearTimeout(this._liveModeOptimisticTimer);
+                this._liveModeOptimisticTimer = null;
+            }
+        }
+
         const isOn = this._liveModeSwitchEnabled();
         this.liveModeToggle.checked = isOn;
+        this.liveModeToggle.disabled = this._liveModePending;
         this.liveModeRow.classList.toggle("is-on", isOn);
         this.liveModeState.textContent = isOn ? "Activé" : "Désactivé";
         this.liveModeToggle.title = isOn ? "Désactiver le mode live" : "Activer le mode live";
     }
     async _setLiveMode(enabled) {
         if (!this._hass) return;
-        this.liveModeToggle.disabled = true;
+        this._liveModeOptimistic = enabled;
+        this._liveModePending = true;
+        this._updateLiveModeControl();
+
+        if (this._liveModeOptimisticTimer) clearTimeout(this._liveModeOptimisticTimer);
         try {
             await this._hass.callService("scene_manager", "set_live_mode", { enabled });
         } catch (err) {
@@ -574,10 +600,16 @@ class SceneManagerCard extends HTMLElement {
                 await this._hass.callService("switch", service, { entity_id: entityId });
             } catch (fallbackErr) {
                 console.error("scene-manager: live mode switch update failed", fallbackErr);
-                this.liveModeToggle.checked = !enabled;
+                this._liveModeOptimistic = null;
+                this._liveModePending = false;
             }
         } finally {
-            this.liveModeToggle.disabled = false;
+            this._liveModeOptimisticTimer = setTimeout(() => {
+                this._liveModeOptimistic = null;
+                this._liveModePending = false;
+                this._liveModeOptimisticTimer = null;
+                this._updateLiveModeControl();
+            }, 2500);
             this._updateLiveModeControl();
         }
     }

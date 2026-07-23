@@ -2,7 +2,7 @@
 
 Scene Manager Card est la carte Lovelace pour piloter **Scene Manager Ultimate**. Elle est publiee separement de l'integration afin de pouvoir mettre a jour l'interface via HACS sans mettre a jour le backend.
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue)
+![Version](https://img.shields.io/badge/version-1.1.2-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Card-orange)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Lovelace-41BDF5)
 
@@ -27,6 +27,7 @@ https://github.com/Micpi/ha-scene-manager-ultimate
 La version `1.1.0` de la carte est prevue pour Scene Manager Ultimate `1.1.0` ou plus recent afin de profiter du switch live persistant et du service trace `scene_manager.activate_scene`.
 
 Depuis `v1.1.1`, le menu d'edition de scene contient aussi un toggle **Mode live** pour activer ou desactiver directement `switch.scene_manager_live_mode` pendant la preparation d'une scene.
+Depuis `v1.1.2`, ce toggle utilise un etat optimiste et le registre Scene Manager comme fallback pour rester synchronise meme pendant le delai de rafraichissement Home Assistant.
 
 ## Configuration rapide
 
