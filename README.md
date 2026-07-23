@@ -2,7 +2,7 @@
 
 Scene Manager Card est la carte Lovelace pour piloter **Scene Manager Ultimate**. Elle est publiee separement de l'integration afin de pouvoir mettre a jour l'interface via HACS sans mettre a jour le backend.
 
-![Version](https://img.shields.io/badge/version-1.0.18-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Card-orange)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Lovelace-41BDF5)
 
@@ -24,6 +24,8 @@ L'integration backend reste separee :
 https://github.com/Micpi/ha-scene-manager-ultimate
 ```
 
+La version `1.1.0` de la carte est prevue pour Scene Manager Ultimate `1.1.0` ou plus recent afin de profiter du switch live persistant et du service trace `scene_manager.activate_scene`.
+
 ## Configuration rapide
 
 ```yaml
@@ -42,6 +44,10 @@ icon: mdi:home-floor-1
 | `room` | string | vide | Piece fixe a afficher. |
 | `scene_prefix` | string | vide | Isole un groupe de scenes dans une meme piece. |
 | `activation_transition` | number | `2` | Transition en secondes lors du declenchement. |
+| `respect_live_mode` | boolean | `true` | Respecte le switch live de l'integration pendant l'edition. |
+| `live_mode_entity` | string | `switch.scene_manager_live_mode` | Switch utilise pour autoriser les changements de lumieres en direct. |
+| `action_source` | string | `card` | Source envoyee au service `scene_manager.activate_scene`. |
+| `fallback_to_scene_service` | boolean | `true` | Utilise `scene.turn_on` si le service d'integration n'est pas disponible. |
 | `auto_select_lights` | boolean | `true` | Selectionne automatiquement les lumieres allumees lors de la creation. |
 | `show_empty` | boolean | `true` | Affiche le message quand aucune scene n'est disponible. |
 | `empty_text` | string | `Aucune scène` | Message vide personnalise. |
@@ -79,6 +85,16 @@ type: custom:scene-manager-card
 title: Scenes repas
 room: salon
 scene_prefix: repas
+```
+
+### Edition sans live
+
+```yaml
+type: custom:scene-manager-card
+title: Scenes bureau
+room: bureau
+respect_live_mode: true
+live_mode_entity: switch.scene_manager_live_mode
 ```
 
 ### Pieces manuelles

@@ -1,12 +1,13 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.18
+// Version: 1.1.0
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.18';
+const VERSION = '1.1.0';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
+const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -36,7 +37,7 @@ const PRESET_ICONS = [
 
 class SceneManagerCard extends HTMLElement {
     static getConfigElement() { return document.createElement("scene-manager-editor"); }
-    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '', scene_prefix: '', activation_transition: 2, auto_select_lights: true, show_empty: true, empty_text: 'Aucune scène' }; }
+    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '', scene_prefix: '', activation_transition: 2, auto_select_lights: true, show_empty: true, empty_text: 'Aucune scène', respect_live_mode: true, live_mode_entity: DEFAULT_LIVE_MODE_ENTITY_ID, action_source: 'card', fallback_to_scene_service: true }; }
 
     set hass(hass) {
         this._hass = hass;
@@ -51,7 +52,7 @@ class SceneManagerCard extends HTMLElement {
 
             if (this.isMenuOpen) {
                 if (this.mainLightsContainer && this.mainLightsContainer.innerHTML === "") {
-                    if (this.areas.length > 0) this._buildLightControls(this.editingId ? this._getSceneEntities(this.editingId) : null);
+                    if (this.areas.length > 0) this._buildLightControls(this.editingId ? this._getSceneEntities(this.editingId) : null, this.editingId ? this._getSceneSnapshot(this.editingId) : null);
                 }
                 this._updateLightStates();
             }
@@ -242,6 +243,10 @@ class SceneManagerCard extends HTMLElement {
         this._applyAppearance();
 
         this.saveBtn.addEventListener("click", () => this._saveScene(), { passive: true });
+        this.inputColor.addEventListener("input", (e) => {
+            this.currentColor = e.target.value;
+            if (this.editingId) this._updateContent();
+        }, { passive: true });
     }
 
     _createFakeButtons() {
@@ -492,6 +497,37 @@ class SceneManagerCard extends HTMLElement {
         const transition = Number(this.config && this.config.activation_transition);
         return Number.isFinite(transition) && transition >= 0 ? transition : 2;
     }
+    _liveModeEntityId() {
+        const configured = this.config && this.config.live_mode_entity;
+        return (configured || DEFAULT_LIVE_MODE_ENTITY_ID).toString().trim() || DEFAULT_LIVE_MODE_ENTITY_ID;
+    }
+    _respectLiveMode() {
+        return !(this.config && this.config.respect_live_mode === false);
+    }
+    _liveModeEnabled() {
+        if (!this._respectLiveMode()) return true;
+        const entityId = this._liveModeEntityId();
+        const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
+        return stateObj && stateObj.state === "on";
+    }
+    _actionSource() {
+        const source = this.config && this.config.action_source;
+        return (source || "card").toString().trim() || "card";
+    }
+    async _activateScene(entityId) {
+        const transition = this._activationTransition();
+        try {
+            await this._hass.callService("scene_manager", "activate_scene", {
+                entity_id: entityId,
+                transition,
+                source: this._actionSource()
+            });
+        } catch (err) {
+            if (this.config && this.config.fallback_to_scene_service === false) throw err;
+            console.warn("scene-manager: activate_scene failed, falling back to scene.turn_on", err);
+            await this._hass.callService("scene", "turn_on", { entity_id: entityId, transition });
+        }
+    }
     _escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({
             '&': '&amp;',
@@ -627,9 +663,93 @@ class SceneManagerCard extends HTMLElement {
     _loadOrder() { return this.cachedOrder; }
     _saveMeta(meta) { this.cachedMeta = meta; this.shouldUpdate = true; }
     _loadMeta() { return this.cachedMeta; }
-    _getSceneEntities(sceneId) { const sceneObj = this._hass.states[sceneId]; return sceneObj && sceneObj.attributes.entity_id ? sceneObj.attributes.entity_id : []; }
+    _getSceneEntities(sceneId) {
+        const sceneObj = this._hass.states[sceneId];
+        const entities = sceneObj && sceneObj.attributes.entity_id;
+        if (Array.isArray(entities)) return entities;
+        if (typeof entities === "string") return [entities];
+        return [];
+    }
+    _getSceneSnapshot(sceneId) {
+        const meta = this._loadMeta();
+        const item = meta && meta[sceneId];
+        return item && item.entities ? item.entities : {};
+    }
+    _brightnessPctFromState(stateObj) {
+        if (!stateObj || !stateObj.attributes) return 0;
+        return stateObj.attributes.brightness ? Math.round((stateObj.attributes.brightness / 255) * 100) : (stateObj.state === "on" ? 100 : 0);
+    }
+    _findLightRow(eid) {
+        return Array.from(this.shadowRoot.querySelectorAll(".light-row")).find(row => row.dataset.entityId === eid);
+    }
+    _setRowDesiredState(row, desiredState, brightnessPct = null) {
+        const slider = row.querySelector(".brightness-slider");
+        const toggle = row.querySelector(".light-toggle");
+        const cb = row.querySelector(".light-select");
+        const nextState = desiredState === "on" ? "on" : "off";
+        const pct = brightnessPct === null ? Number(slider.value || 0) : Number(brightnessPct);
+        const safePct = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
 
-    _buildLightControls(entitiesInScene = null) {
+        row.dataset.desiredState = nextState;
+        row.dataset.brightnessPct = String(nextState === "on" ? (safePct > 0 ? safePct : 100) : 0);
+        slider.value = row.dataset.brightnessPct;
+        if (nextState === "on") toggle.classList.add("on"); else toggle.classList.remove("on");
+        if (cb && nextState === "on") {
+            cb.checked = true;
+            cb.dispatchEvent(new Event("change"));
+        }
+    }
+    _applySnapshotToControls(sceneSnapshot) {
+        if (!sceneSnapshot || typeof sceneSnapshot !== "object") return;
+        Object.entries(sceneSnapshot).forEach(([eid, snapshot]) => {
+            const row = this._findLightRow(eid);
+            if (!row || !snapshot) return;
+            const brightness = Number(snapshot.brightness);
+            const pct = Number.isFinite(brightness) ? Math.round((brightness / 255) * 100) : (snapshot.state === "on" ? 100 : 0);
+            const cb = row.querySelector(".light-select");
+            if (cb) {
+                cb.checked = true;
+                cb.dispatchEvent(new Event("change"));
+            }
+            this._setRowDesiredState(row, snapshot.state === "on" ? "on" : "off", pct);
+        });
+    }
+    _buildSceneSnapshot(selectedLights) {
+        const snapshot = {};
+        selectedLights.forEach(eid => {
+            const stateObj = this._hass.states[eid];
+            if (!stateObj) return;
+            const row = this._findLightRow(eid);
+            const attributes = { ...(stateObj.attributes || {}) };
+            let desiredState = stateObj.state;
+            let brightnessPct = this._brightnessPctFromState(stateObj);
+            let supportsBrightness = attributes.brightness !== undefined;
+
+            if (row) {
+                desiredState = row.dataset.desiredState || desiredState;
+                const slider = row.querySelector(".brightness-slider");
+                supportsBrightness = slider ? !slider.disabled : supportsBrightness;
+                const rowPct = Number(row.dataset.brightnessPct || slider?.value);
+                if (Number.isFinite(rowPct)) brightnessPct = rowPct;
+            }
+
+            if (brightnessPct > 0) {
+                desiredState = "on";
+                if (supportsBrightness) attributes.brightness = Math.round((Math.max(1, Math.min(100, brightnessPct)) / 100) * 255);
+                else delete attributes.brightness;
+            } else if (desiredState === "off") {
+                delete attributes.brightness;
+            }
+
+            snapshot[eid] = {
+                state: desiredState === "off" ? "off" : "on",
+                attributes
+            };
+        });
+        return snapshot;
+    }
+
+    _buildLightControls(entitiesInScene = null, sceneSnapshot = null) {
         if (!this.isMenuOpen) return;
         let lightsByArea = {};
         let noAreaLights = [];
@@ -676,8 +796,28 @@ class SceneManagerCard extends HTMLElement {
                     row.innerHTML = `<input type="checkbox" class="light-select" data-entity="${eid}"><div class="light-name">...</div><input type="range" min="0" max="100" class="brightness-slider"><div class="light-toggle"><ha-icon icon="mdi:power"></ha-icon></div>`;
                     const cb = row.querySelector(".light-select");
                     cb.addEventListener("change", () => { const all = container.querySelectorAll(".light-select"); const checked = container.querySelectorAll(".light-select:checked"); masterCheck.checked = checked.length > 0; masterCheck.indeterminate = checked.length > 0 && checked.length < all.length; });
-                    row.querySelector(".light-toggle").addEventListener("click", () => this._hass.callService("light", "toggle", { entity_id: eid }));
-                    row.querySelector(".brightness-slider").addEventListener("change", (e) => { const val = e.target.value; if (val == 0) this._hass.callService("light", "turn_off", { entity_id: eid }); else this._hass.callService("light", "turn_on", { entity_id: eid, brightness_pct: val }); });
+                    const toggleControl = row.querySelector(".light-toggle");
+                    const slider = row.querySelector(".brightness-slider");
+                    toggleControl.addEventListener("click", () => {
+                        if (!this._liveModeEnabled()) {
+                            const isOn = row.dataset.desiredState === "on" || toggleControl.classList.contains("on");
+                            const nextPct = Number(row.dataset.brightnessPct || slider.value || 100) || 100;
+                            this._setRowDesiredState(row, isOn ? "off" : "on", isOn ? 0 : nextPct);
+                            return;
+                        }
+                        this._hass.callService("light", "toggle", { entity_id: eid });
+                    });
+                    slider.addEventListener("change", (e) => {
+                        const val = Number(e.target.value);
+                        row.dataset.desiredState = val === 0 ? "off" : "on";
+                        row.dataset.brightnessPct = String(val);
+                        if (!this._liveModeEnabled()) {
+                            this._setRowDesiredState(row, val === 0 ? "off" : "on", val);
+                            return;
+                        }
+                        if (val === 0) this._hass.callService("light", "turn_off", { entity_id: eid });
+                        else this._hass.callService("light", "turn_on", { entity_id: eid, brightness_pct: val });
+                    });
                     row.addEventListener("change", (e) => { if (e.target.classList.contains("brightness-slider")) { cb.checked = true; cb.dispatchEvent(new Event("change")); } });
                     container.appendChild(row);
                 });
@@ -700,21 +840,37 @@ class SceneManagerCard extends HTMLElement {
 
         if (!this._useManualLights() && noAreaLights.length > 0) { createSection("Autres / Non Assignées", "unknown", noAreaLights, false); }
 
-        if (entitiesInScene) { this.shadowRoot.querySelectorAll(".light-select").forEach(cb => { if (entitiesInScene.includes(cb.dataset.entity)) cb.checked = true; }); }
         this._updateLightStates(true);
+        if (entitiesInScene) {
+            this.shadowRoot.querySelectorAll(".light-select").forEach(cb => {
+                if (!entitiesInScene.includes(cb.dataset.entity)) return;
+                cb.checked = true;
+                cb.dispatchEvent(new Event("change"));
+            });
+        }
+        this._applySnapshotToControls(sceneSnapshot);
     }
 
     _updateLightStates(firstRun = false) {
         if (!this.isMenuOpen) return;
         const rows = this.shadowRoot.querySelectorAll(".light-row");
+        const liveMode = this._liveModeEnabled();
         rows.forEach(row => {
             const eid = row.dataset.entityId; const stateObj = this._hass.states[eid]; if (!stateObj) return;
             const isDim = stateObj.attributes.supported_color_modes && !stateObj.attributes.supported_color_modes.includes("onoff");
             const isOn = stateObj.state === "on"; const brightness = stateObj.attributes.brightness ? Math.round((stateObj.attributes.brightness / 255) * 100) : 0;
             const name = stateObj.attributes.friendly_name || eid;
             row.querySelector(".light-name").innerText = name; row.querySelector(".light-name").title = name;
-            const slider = row.querySelector(".brightness-slider"); slider.value = isOn ? brightness : 0; slider.disabled = !isDim && stateObj.attributes.brightness === undefined; if (slider.disabled) slider.style.opacity = 0.3; else slider.style.opacity = 1;
-            const toggle = row.querySelector(".light-toggle"); if (isOn) toggle.classList.add("on"); else toggle.classList.remove("on");
+            const slider = row.querySelector(".brightness-slider");
+            slider.disabled = !isDim && stateObj.attributes.brightness === undefined;
+            if (slider.disabled) slider.style.opacity = 0.3; else slider.style.opacity = 1;
+            const toggle = row.querySelector(".light-toggle");
+            if (liveMode || !row.dataset.desiredState) {
+                row.dataset.desiredState = isOn ? "on" : "off";
+                row.dataset.brightnessPct = String(isOn ? brightness : 0);
+            }
+            slider.value = row.dataset.desiredState === "on" ? Number(row.dataset.brightnessPct || brightness || 100) : 0;
+            if (row.dataset.desiredState === "on") toggle.classList.add("on"); else toggle.classList.remove("on");
             if (firstRun && !this.editingId && !this._useManualLights() && this.config.auto_select_lights !== false) { if (eid.includes(this.currentRoom) && isOn) { const cb = row.querySelector(".light-select"); cb.checked = true; cb.dispatchEvent(new Event("change")); } }
         });
         this.shadowRoot.querySelectorAll("details").forEach(detail => { const master = detail.querySelector(".room-checkbox"); const all = detail.querySelectorAll(".light-select"); const checked = detail.querySelectorAll(".light-select:checked"); if (all.length > 0) { master.checked = checked.length > 0; master.indeterminate = checked.length > 0 && checked.length < all.length; } });
@@ -727,8 +883,9 @@ class SceneManagerCard extends HTMLElement {
         this.saveBtn.classList.add("save-mode");
         if (!this.isMenuOpen) this._toggleMenu(true);
         const sceneObj = this._hass.states[entityId]; const entitiesInScene = sceneObj && sceneObj.attributes.entity_id ? sceneObj.attributes.entity_id : [];
-        this._hass.callService("scene", "turn_on", { entity_id: entityId });
-        this._buildLightControls(entitiesInScene); this._updateContent();
+        const sceneSnapshot = this._getSceneSnapshot(entityId);
+        if (this._liveModeEnabled()) this._activateScene(entityId).catch(err => console.error("scene-manager: edit preview failed", err));
+        this._buildLightControls(entitiesInScene, sceneSnapshot); this._updateContent();
     }
 
     _stopEditing() {
@@ -786,6 +943,7 @@ class SceneManagerCard extends HTMLElement {
                 this.shadowRoot.querySelectorAll(".icon-option").forEach(i => i.classList.remove("selected"));
                 el.classList.add("selected");
                 this.currentIcon = icon;
+                if (this.editingId) this._updateContent();
             });
             this.iconList.appendChild(el);
         });
@@ -805,6 +963,7 @@ class SceneManagerCard extends HTMLElement {
         const checkboxes = this.shadowRoot.querySelectorAll(".light-select:checked");
         const selectedLights = Array.from(checkboxes).map(cb => cb.dataset.entity);
         if (selectedLights.length === 0) return alert(`Sélectionnez au moins une lumière !`);
+        const snapshot = this._buildSceneSnapshot(selectedLights);
 
         const meta = this._loadMeta();
         const replaceEntityId = this.editingId && this.editingId !== newEntityId ? this.editingId : null;
@@ -817,6 +976,7 @@ class SceneManagerCard extends HTMLElement {
             await this._hass.callService("scene_manager", "save_scene", {
                 scene_id: shortId,
                 entities: selectedLights,
+                snapshot,
                 icon: iconToSave,
                 color: color,
                 room: room,
@@ -830,7 +990,14 @@ class SceneManagerCard extends HTMLElement {
         }
 
         if (replaceEntityId) delete meta[replaceEntityId];
-        meta[newEntityId] = { icon: iconToSave, color: color, room: room, order_key: this._orderKey() };
+        const publicSnapshot = {};
+        Object.entries(snapshot).forEach(([eid, item]) => {
+            publicSnapshot[eid] = {
+                state: item.state,
+                brightness: item.attributes ? item.attributes.brightness : undefined
+            };
+        });
+        meta[newEntityId] = { icon: iconToSave, color: color, room: room, order_key: this._orderKey(), entities: publicSnapshot };
         this._saveMeta(meta);
 
         let order = this._loadOrder().filter(id => id !== replaceEntityId);
@@ -863,8 +1030,9 @@ class SceneManagerCard extends HTMLElement {
 
             const localData = meta[entityId];
             const stateAttributes = this._hass.states[entityId].attributes;
-            const themeColor = localData?.color || stateAttributes.theme_color || "var(--primary-text-color)";
-            const icon = localData?.icon || stateAttributes.icon || "mdi:palette";
+            const isEditingThisScene = this.editingId === entityId;
+            const themeColor = isEditingThisScene ? this.inputColor.value : (localData?.color || stateAttributes.theme_color || "var(--primary-text-color)");
+            const icon = isEditingThisScene ? this.currentIcon : (localData?.icon || stateAttributes.icon || "mdi:palette");
 
             btn.style.setProperty('--btn-icon-color', themeColor);
             btn.dataset.entityId = entityId;
@@ -881,9 +1049,13 @@ class SceneManagerCard extends HTMLElement {
                 btn.addEventListener('drop', this._handleDrop.bind(this));
                 btn.addEventListener('dragend', this._handleDragEnd.bind(this));
             } else {
-                btn.addEventListener("click", () => {
-                    this._hass.callService("scene", "turn_on", { entity_id: entityId, transition: this._activationTransition() });
-                    btn.classList.add("activated"); setTimeout(() => btn.classList.remove("activated"), 1500);
+                btn.addEventListener("click", async () => {
+                    try {
+                        await this._activateScene(entityId);
+                        btn.classList.add("activated"); setTimeout(() => btn.classList.remove("activated"), 1500);
+                    } catch (err) {
+                        console.error("scene-manager: activate_scene failed", err);
+                    }
                 });
             }
             btn.querySelector(".delete-badge").addEventListener("click", async (e) => {
@@ -1316,6 +1488,13 @@ class SceneManagerEditor extends HTMLElement {
                         </div>
         </div>
         <div class="option-group">
+            <h3>Mode live</h3>
+            <div class="row"><div class="label">Respecter switch</div><input type="checkbox" id="respect_live_mode" ${this._config.respect_live_mode === false ? '' : 'checked'}></div>
+            <div class="row"><div class="label">Switch live</div>${useEntityPicker ? `<ha-entity-picker id="live_mode_entity" value="${this._config.live_mode_entity || DEFAULT_LIVE_MODE_ENTITY_ID}"></ha-entity-picker>` : `<input type="text" id="live_mode_entity" value="${this._config.live_mode_entity || DEFAULT_LIVE_MODE_ENTITY_ID}" placeholder="${DEFAULT_LIVE_MODE_ENTITY_ID}">`}</div>
+            <div class="row"><div class="label">Source action</div><input type="text" id="action_source" value="${this._config.action_source || 'card'}"></div>
+            <div class="row"><div class="label">Fallback scène</div><input type="checkbox" id="fallback_to_scene_service" ${this._config.fallback_to_scene_service === false ? '' : 'checked'}></div>
+        </div>
+        <div class="option-group">
             <h3>Apparence</h3>
             <div class="row"><div class="label">Style Bouton</div><select id="button_style"><option value="filled" ${this._config.button_style === 'filled' ? 'selected' : ''}>Plein (Filled)</option><option value="outline" ${this._config.button_style === 'outline' ? 'selected' : ''}>Contour (Outline)</option><option value="ghost" ${this._config.button_style === 'ghost' ? 'selected' : ''}>Transparent (Ghost)</option></select></div>
             <div class="row"><div class="label">Forme Bouton</div><select id="button_shape"><option value="rounded" ${this._config.button_shape === 'rounded' ? 'selected' : ''}>Arrondi</option><option value="box" ${this._config.button_shape === 'box' ? 'selected' : ''}>Carré</option><option value="circle" ${this._config.button_shape === 'circle' ? 'selected' : ''}>Rond</option></select></div>
@@ -1359,6 +1538,17 @@ class SceneManagerEditor extends HTMLElement {
             iconPicker.addEventListener("value-changed", (e) => {
                 const newConfig = { ...this._config };
                 newConfig.icon = e.detail.value;
+                this.configChanged(newConfig);
+            });
+        }
+
+        const liveModePicker = this.shadowRoot.getElementById("live_mode_entity");
+        if (liveModePicker && liveModePicker.tagName && liveModePicker.tagName.toLowerCase() === "ha-entity-picker") {
+            if (this._hass) liveModePicker.hass = this._hass;
+            liveModePicker.includeDomains = ["switch"];
+            liveModePicker.addEventListener("value-changed", (e) => {
+                const newConfig = { ...this._config };
+                newConfig.live_mode_entity = (e.detail && e.detail.value) || DEFAULT_LIVE_MODE_ENTITY_ID;
                 this.configChanged(newConfig);
             });
         }
