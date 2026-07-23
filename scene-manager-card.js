@@ -1,12 +1,16 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.10
+// Version: 1.1.11
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
-// Version constant used below
-const VERSION = '1.1.10';
+// Card version displayed in the browser console and aligned with HACS releases.
+const VERSION = '1.1.11';
+
+// Backend registry sensor that exposes metadata, scene order, and live mode state.
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
+
+// Default switch entity created by the companion integration for live edit mode.
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
 // ... Le reste du code de la classe SceneManagerCard ...
@@ -25,6 +29,7 @@ window.customCards.push({
     preview: true
 });
 
+// Icon choices shown in the compact scene icon picker.
 const PRESET_ICONS = [
     "mdi:palette", "mdi:sofa", "mdi:bed", "mdi:power-sleep", "mdi:weather-sunny",
     "mdi:fire", "mdi:snowflake", "mdi:water-percent", "mdi:leaf", "mdi:heart",
@@ -36,9 +41,13 @@ const PRESET_ICONS = [
 ];
 
 class SceneManagerCard extends HTMLElement {
+    // Home Assistant asks this factory for the visual card editor element.
     static getConfigElement() { return document.createElement("scene-manager-editor"); }
+
+    // Default card configuration used when a user adds the card from the UI.
     static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '', button_text_color: '', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '', scene_prefix: '', activation_transition: 2, auto_select_lights: true, show_empty: true, empty_text: 'Aucune scène', respect_live_mode: true, live_mode_entity: DEFAULT_LIVE_MODE_ENTITY_ID, action_source: 'card', fallback_to_scene_service: true }; }
 
+    // Reactive Home Assistant setter called whenever states or registry attributes update.
     set hass(hass) {
         this._hass = hass;
 
@@ -66,21 +75,42 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Store card configuration and refresh layout-specific pieces only when needed.
     setConfig(config) {
-        // Determine previous show_title value for header re-render decisions
+        // Previous title visibility decides whether the header/toggle must be rebuilt.
         const prevShowTitle = this.config ? this.config.show_title : undefined;
+
+        // Previous manual light mode decides whether room controls must be rebuilt.
         const prevManualLights = this.config ? this.config.manual_lights : undefined;
+
+        // Previous manual zone text decides whether room controls must be rebuilt.
         const prevManualZones = this.config ? this.config.manual_zones : undefined;
+
+        // Serialized previous manual room list keeps deep comparison cheap and stable.
         const prevManualRoomsStr = this.config ? JSON.stringify(this.config.manual_rooms || null) : undefined;
+
+        // Serialized next manual room list is compared to the previous one.
         const nextManualRoomsStr = JSON.stringify((config && config.manual_rooms) || null);
+
         // Avoid unnecessary updates if config hasn't changed
         if (this.config && JSON.stringify(this.config) === JSON.stringify(config)) return;
 
+        // Current full config object used by all rendering helpers.
         this.config = config;
+
+        // Previous fixed room is used to detect room/prefix changes.
         const oldFixed = this.fixedRoom;
+
+        // Optional fixed room filters scenes to a single Home Assistant area id.
         this.fixedRoom = config.room ? config.room.toLowerCase() : null;
+
+        // Scene button width from config, including CSS unit.
         this.btnWidth = config.button_width || '100px';
+
+        // Scene button height from config, including CSS unit.
         this.btnHeight = config.button_height || '80px';
+
+        // Flex alignment used by the horizontal scene list.
         this.alignment = 'flex-start';
         if (config.scene_alignment === 'center') this.alignment = 'center';
         if (config.scene_alignment === 'right') this.alignment = 'flex-end';
@@ -115,27 +145,72 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Build the shadow DOM once and initialize all runtime state fields.
     _initElements() {
+        // Currently selected icon in the scene creation/edit form.
         this.currentIcon = "mdi:palette";
+
+        // Currently selected color in the scene creation/edit form.
         this.currentColor = "#9E9E9E";
+
+        // Whether the creation/edit drawer is open.
         this.isMenuOpen = false;
+
+        // Entity id of the scene being edited, or null while creating.
         this.editingId = null;
+
+        // Drag source element used during scene drag-and-drop reorder.
         this.dragSrcEl = null;
+
+        // Current room/order scope shown by this card.
         this.currentRoom = this.fixedRoom || "";
+
+        // Home Assistant area list, or manually configured room list.
         this.areas = [];
+
+        // Home Assistant entity registry entries used to map lights to areas.
         this.entitiesRegistry = [];
+
+        // Last order received from the backend registry or optimistic save.
         this.cachedOrder = [];
+
+        // Last scene metadata received from the backend registry or optimistic save.
         this.cachedMeta = {};
+
+        // Per-device mirror of scene colors, used only as a short fallback cache.
         this._sceneIconColors = {};
+
+        // Metadata waiting for backend confirmation.
         this._optimisticMeta = {};
+
+        // Order waiting for backend confirmation.
         this._optimisticOrder = null;
+
+        // Scene ids waiting for Home Assistant state creation after save.
         this._optimisticScenes = {};
+
+        // Visual order captured at the exact moment a scene edit starts.
         this._editingOrderSnapshot = null;
+
+        // Scene entity id that was originally selected for editing.
         this._editingOriginalEntityId = null;
+
+        // Zero-based visual index captured at the exact moment a scene edit starts.
+        this._editingOriginalIndex = null;
+
+        // Whether the card content needs to be rebuilt on the next hass update.
         this.shouldUpdate = true;
+
+        // Last registry sensor update timestamp seen by this card instance.
         this._lastStorageUpdate = null;
+
+        // Last room key used when reading the registry sensor.
         this._lastStorageRoom = null;
+
+        // Temporary live mode value displayed while the backend service call is pending.
         this._liveModeOptimistic = null;
+
+        // Whether a live mode service call is in progress.
         this._liveModePending = false;
 
         this.shadowRoot.innerHTML = `
@@ -290,6 +365,7 @@ class SceneManagerCard extends HTMLElement {
         this._updateLiveModeControl();
     }
 
+    // Render static preview buttons when Home Assistant state is not available.
     _createFakeButtons() {
         const btnStyle = this.config.button_style || 'filled';
         const btnShape = this.config.button_shape || 'rounded';
@@ -301,6 +377,7 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Update preview button style after editor configuration changes.
     _updateFakeButtons() {
         const btns = this.shadowRoot.querySelectorAll('.scene-btn');
         const btnStyle = this.config.button_style || 'filled';
@@ -317,6 +394,7 @@ class SceneManagerCard extends HTMLElement {
         });
     }
 
+    // Apply card configuration to CSS variables consumed by the template styles.
     _applyAppearance() {
         // Apply appearance configuration to CSS variables on the ha-card
         try {
@@ -370,6 +448,7 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Return a theme-aware CSS color when the user keeps a default color setting.
     _themeAwareButtonColor(value) {
         const raw = (value || '').toString().trim();
         if (!raw || raw === 'theme' || raw.toLowerCase() === '#000000') {
@@ -378,6 +457,7 @@ class SceneManagerCard extends HTMLElement {
         return raw;
     }
 
+    // Render the title/room selector area and the add/edit menu toggle.
     _renderHeader() {
         const headerIcon = this.config.icon || "mdi:home-floor-1";
         const showIcon = this.config.show_icon !== false;
@@ -471,6 +551,7 @@ class SceneManagerCard extends HTMLElement {
         if (this.roomSelector && this.areas.length > 0) this._populateRoomSelector();
     }
 
+    // Fill the room selector with Home Assistant areas or manual room entries.
     _populateRoomSelector() {
         this.roomSelector.innerHTML = "";
         this.areas.forEach(area => {
@@ -489,6 +570,7 @@ class SceneManagerCard extends HTMLElement {
         });
     }
 
+    // Load areas and entity registry data needed to discover lights by room.
     async _fetchData() {
         try {
             // Manual lights mode: zones and lights are provided by config, no auto-detection.
@@ -525,38 +607,57 @@ class SceneManagerCard extends HTMLElement {
         } catch (e) { console.error("Erreur", e); }
     }
 
+    // Return the backend registry sensor entity id.
     _getStorageEntityId() { return REGISTRY_ENTITY_ID; }
 
+    // Normalize free-form text into a stable lowercase key.
     _normalizeId(value) {
         return (value || '').toString().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
     }
 
+    // Return the normalized current room key.
     _currentRoomKey() { return this._normalizeId(this.currentRoom); }
+
+    // Return the normalized optional scene prefix key.
     _scenePrefixKey() { return this._normalizeId(this.config && this.config.scene_prefix); }
+
+    // Return the storage order key that isolates room and prefix combinations.
     _orderKey() {
         const room = this._currentRoomKey();
         const scenePrefix = this._scenePrefixKey();
         return [room, scenePrefix].filter(Boolean).join('_');
     }
+
+    // Return the scene entity id prefix for the active room/prefix scope.
     _sceneEntityPrefix() {
         const orderKey = this._orderKey();
         return orderKey ? `scene.${orderKey}_` : "scene.";
     }
+
+    // Return the configured activation transition in seconds.
     _activationTransition() {
         const transition = Number(this.config && this.config.activation_transition);
         return Number.isFinite(transition) && transition >= 0 ? transition : 2;
     }
+
+    // Return the live mode switch entity id configured for this card.
     _liveModeEntityId() {
         const configured = this.config && this.config.live_mode_entity;
         return (configured || DEFAULT_LIVE_MODE_ENTITY_ID).toString().trim() || DEFAULT_LIVE_MODE_ENTITY_ID;
     }
+
+    // Return whether scene editing should respect the persistent live mode switch.
     _respectLiveMode() {
         return !(this.config && this.config.respect_live_mode === false);
     }
+
+    // Return whether light controls should act live or only change the staged snapshot.
     _liveModeEnabled() {
         if (!this._respectLiveMode()) return true;
         return this._liveModeSwitchEnabled();
     }
+
+    // Read the actual live mode value from the switch or backend registry sensor.
     _liveModeActualEnabled() {
         const entityId = this._liveModeEntityId();
         const stateObj = this._hass && this._hass.states ? this._hass.states[entityId] : null;
@@ -568,15 +669,18 @@ class SceneManagerCard extends HTMLElement {
         if (typeof liveMode === "string") return ["on", "true", "1", "yes"].includes(liveMode.toLowerCase());
         return null;
     }
+    // Return the displayed live mode value, including an optimistic pending value.
     _liveModeSwitchEnabled() {
         if (this._liveModeOptimistic !== null) return this._liveModeOptimistic;
         const actual = this._liveModeActualEnabled();
         if (actual !== null) return actual;
         return this._storedLiveMode() === true;
     }
+    // Return the localStorage key used only as a local fallback for live mode.
     _liveModeStorageKey() {
         return `scene_manager_live_mode:${this._liveModeEntityId()}`;
     }
+    // Read the locally remembered live mode value when backend state is unavailable.
     _storedLiveMode() {
         try {
             const value = localStorage.getItem(this._liveModeStorageKey());
@@ -585,11 +689,13 @@ class SceneManagerCard extends HTMLElement {
         } catch (e) { /* ignore storage errors */ }
         return null;
     }
+    // Store the last chosen live mode locally as a per-device fallback.
     _rememberLiveMode(enabled) {
         try {
             localStorage.setItem(this._liveModeStorageKey(), enabled ? "on" : "off");
         } catch (e) { /* ignore storage errors */ }
     }
+    // Refresh the live mode row, switch state, label, and disabled state.
     _updateLiveModeControl() {
         if (!this.liveModeRow || !this.liveModeToggle || !this.liveModeState) return;
         const visible = this._respectLiveMode();
@@ -609,6 +715,7 @@ class SceneManagerCard extends HTMLElement {
         this.liveModeState.textContent = isOn ? "Activé" : "Désactivé";
         this.liveModeToggle.title = isOn ? "Désactiver le mode live" : "Activer le mode live";
     }
+    // Persist live mode through the integration service, with switch fallback.
     async _setLiveMode(enabled) {
         if (!this._hass) return;
         this._liveModeOptimistic = enabled;
@@ -639,10 +746,12 @@ class SceneManagerCard extends HTMLElement {
             this._updateLiveModeControl();
         }
     }
+    // Return the audit/source label sent when activating a scene.
     _actionSource() {
         const source = this.config && this.config.action_source;
         return (source || "card").toString().trim() || "card";
     }
+    // Activate a scene through Scene Manager, falling back to scene.turn_on if allowed.
     async _activateScene(entityId) {
         const transition = this._activationTransition();
         try {
@@ -657,6 +766,7 @@ class SceneManagerCard extends HTMLElement {
             await this._hass.callService("scene", "turn_on", { entity_id: entityId, transition });
         }
     }
+    // Escape text inserted into HTML templates.
     _escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({
             '&': '&amp;',
@@ -667,10 +777,12 @@ class SceneManagerCard extends HTMLElement {
         }[char]));
     }
 
+    // Return whether light rooms are manually configured instead of auto-discovered.
     _useManualLights() {
         return !!(this.config && this.config.manual_lights);
     }
 
+    // Parse legacy multiline manual zone text into room/light objects.
     _parseManualZones(text) {
         if (!text || typeof text !== 'string') return [];
         const lines = text.split(/\r?\n/);
@@ -711,6 +823,7 @@ class SceneManagerCard extends HTMLElement {
         return zones;
     }
 
+    // Normalize structured manual room configuration from the card editor.
     _parseManualRooms(rooms) {
         if (!Array.isArray(rooms)) return [];
         const parsed = [];
@@ -731,6 +844,7 @@ class SceneManagerCard extends HTMLElement {
         return parsed;
     }
 
+    // Apply manual room configuration and keep currentRoom within valid choices.
     _applyManualZonesConfig() {
         if (!this._hass) return;
         if (!this._useManualLights()) return;
@@ -752,6 +866,7 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Sync cached metadata/order from the backend registry sensor.
     _checkServerUpdates() {
         if (!this.currentRoom) return;
         const entityId = this._getStorageEntityId();
@@ -786,7 +901,10 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Refresh backend registry data after the active room changes.
     _updateStorageEntity() { this._checkServerUpdates(); }
+
+    // Persist scene order through the backend and keep an optimistic local copy.
     _saveOrder(orderedIds) {
         this.cachedOrder = orderedIds.filter(Boolean);
         this._optimisticOrder = [...this.cachedOrder];
@@ -796,17 +914,24 @@ class SceneManagerCard extends HTMLElement {
             order: this.cachedOrder
         }).catch(err => console.error("scene-manager: reorder_scenes failed", err));
     }
+    // Return the currently cached scene order.
     _loadOrder() { return this.cachedOrder; }
+
+    // Replace cached metadata after an optimistic or backend update.
     _saveMeta(meta) {
         this.cachedMeta = meta;
         this._rememberSceneIconColors(meta);
         this.shouldUpdate = true;
     }
+    // Return the currently cached scene metadata.
     _loadMeta() { return this.cachedMeta; }
+
+    // Compare two ordered entity id lists.
     _sameOrder(left, right) {
         if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
         return left.every((value, index) => value === right[index]);
     }
+    // Merge pending local metadata with backend metadata until confirmation arrives.
     _mergeOptimisticMeta(backendMeta) {
         const backend = backendMeta && typeof backendMeta === "object" ? backendMeta : {};
         Object.entries(this._optimisticMeta).forEach(([entityId, item]) => {
@@ -822,6 +947,7 @@ class SceneManagerCard extends HTMLElement {
         });
         return { ...backend, ...this._optimisticMeta };
     }
+    // Cache backend scene colors locally as a short fallback for theme/UI refreshes.
     _rememberSceneIconColors(meta) {
         if (!meta || typeof meta !== "object") return;
         Object.entries(meta).forEach(([entityId, item]) => {
@@ -829,9 +955,11 @@ class SceneManagerCard extends HTMLElement {
             this._rememberSceneIconColor(entityId, item.color);
         });
     }
+    // Return the localStorage key used for one scene color fallback.
     _sceneColorStorageKey(entityId) {
         return `scene_manager_scene_color:${entityId}`;
     }
+    // Store one scene color in memory and localStorage when it is a valid hex color.
     _rememberSceneIconColor(entityId, color) {
         if (!entityId || !color || typeof color !== "string") return;
         if (!this._isHexColor(color)) return;
@@ -840,6 +968,7 @@ class SceneManagerCard extends HTMLElement {
             localStorage.setItem(this._sceneColorStorageKey(entityId), color);
         } catch (e) { /* ignore storage errors */ }
     }
+    // Remove stale local color data after scene rename or deletion.
     _forgetSceneIconColor(entityId) {
         if (!entityId) return;
         delete this._sceneIconColors[entityId];
@@ -847,6 +976,7 @@ class SceneManagerCard extends HTMLElement {
             localStorage.removeItem(this._sceneColorStorageKey(entityId));
         } catch (e) { /* ignore storage errors */ }
     }
+    // Read one scene color from memory/localStorage when backend data is not ready yet.
     _storedSceneIconColor(entityId) {
         if (this._sceneIconColors[entityId]) return this._sceneIconColors[entityId];
         try {
@@ -858,9 +988,11 @@ class SceneManagerCard extends HTMLElement {
         } catch (e) { /* ignore storage errors */ }
         return null;
     }
+    // Return whether a value is a six-digit hex color.
     _isHexColor(color) {
         return typeof color === "string" && /^#[0-9a-fA-F]{6}$/.test(color);
     }
+    // Resolve the icon color displayed on a scene button.
     _sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene) {
         if (isEditingThisScene) return this.inputColor.value;
         const storedColor = localData?.color || stateAttributes.theme_color || this._storedSceneIconColor(entityId);
@@ -870,6 +1002,7 @@ class SceneManagerCard extends HTMLElement {
         }
         return "var(--scene-manager-default-icon-color, var(--primary-text-color))";
     }
+    // Resolve the color shown in the editor color picker for a scene.
     _scenePickerColor(entityId, localData, stateAttributes) {
         const candidates = [
             localData?.color,
@@ -878,21 +1011,36 @@ class SceneManagerCard extends HTMLElement {
         ];
         return candidates.find(color => this._isHexColor(color)) || "#9E9E9E";
     }
+    // Return the visual scene order from DOM buttons, falling back to backend cache.
     _visibleSceneOrder() {
         const order = Array.from(this.shadowRoot.querySelectorAll(".scene-btn"))
             .map(btn => btn.dataset.entityId)
             .filter(Boolean);
         return order.length > 0 ? order : [...this._loadOrder()];
     }
+
+    // Return the zero-based position captured when editing began.
+    _editingPosition() {
+        if (Number.isInteger(this._editingOriginalIndex) && this._editingOriginalIndex >= 0) {
+            return this._editingOriginalIndex;
+        }
+
+        const originalEntityId = this._editingOriginalEntityId || this.editingId;
+        const snapshot = Array.isArray(this._editingOrderSnapshot) ? this._editingOrderSnapshot : [];
+        const index = snapshot.indexOf(originalEntityId);
+        return index >= 0 ? index : null;
+    }
+
+    // Build the order that should exist after saving the current scene.
     _orderAfterSave(newEntityId, replaceEntityId) {
         const originalEntityId = this._editingOriginalEntityId || this.editingId || replaceEntityId || newEntityId;
         const snapshot = Array.isArray(this._editingOrderSnapshot) && this._editingOrderSnapshot.length > 0
             ? [...this._editingOrderSnapshot]
             : this._visibleSceneOrder();
 
-        const originalIndex = snapshot.indexOf(originalEntityId);
+        const originalIndex = this._editingPosition() ?? snapshot.indexOf(originalEntityId);
         const baseOrder = snapshot
-            .filter(id => id && id !== replaceEntityId && id !== newEntityId);
+            .filter(id => id && id !== originalEntityId && id !== replaceEntityId && id !== newEntityId);
 
         if (this.editingId) {
             const insertAt = originalIndex >= 0 ? Math.min(originalIndex, baseOrder.length) : baseOrder.length;
@@ -903,6 +1051,7 @@ class SceneManagerCard extends HTMLElement {
         baseOrder.push(newEntityId);
         return baseOrder;
     }
+    // Return the entities currently attached to a Home Assistant scene state.
     _getSceneEntities(sceneId) {
         const sceneObj = this._hass.states[sceneId];
         const entities = sceneObj && sceneObj.attributes.entity_id;
@@ -910,18 +1059,22 @@ class SceneManagerCard extends HTMLElement {
         if (typeof entities === "string") return [entities];
         return [];
     }
+    // Return the compact backend snapshot stored for one managed scene.
     _getSceneSnapshot(sceneId) {
         const meta = this._loadMeta();
         const item = meta && meta[sceneId];
         return item && item.entities ? item.entities : {};
     }
+    // Convert a Home Assistant light state brightness into a 0-100 percentage.
     _brightnessPctFromState(stateObj) {
         if (!stateObj || !stateObj.attributes) return 0;
         return stateObj.attributes.brightness ? Math.round((stateObj.attributes.brightness / 255) * 100) : (stateObj.state === "on" ? 100 : 0);
     }
+    // Find the editor row associated with one light entity id.
     _findLightRow(eid) {
         return Array.from(this.shadowRoot.querySelectorAll(".light-row")).find(row => row.dataset.entityId === eid);
     }
+    // Update one light row's staged on/off and brightness state.
     _setRowDesiredState(row, desiredState, brightnessPct = null) {
         const slider = row.querySelector(".brightness-slider");
         const toggle = row.querySelector(".light-toggle");
@@ -939,6 +1092,7 @@ class SceneManagerCard extends HTMLElement {
             cb.dispatchEvent(new Event("change"));
         }
     }
+    // Apply a stored scene snapshot to the light editor controls.
     _applySnapshotToControls(sceneSnapshot) {
         if (!sceneSnapshot || typeof sceneSnapshot !== "object") return;
         Object.entries(sceneSnapshot).forEach(([eid, snapshot]) => {
@@ -954,6 +1108,7 @@ class SceneManagerCard extends HTMLElement {
             this._setRowDesiredState(row, snapshot.state === "on" ? "on" : "off", pct);
         });
     }
+    // Build the scene snapshot payload from selected light editor rows.
     _buildSceneSnapshot(selectedLights) {
         const snapshot = {};
         selectedLights.forEach(eid => {
@@ -989,6 +1144,7 @@ class SceneManagerCard extends HTMLElement {
         return snapshot;
     }
 
+    // Build grouped light controls for the creation/edit menu.
     _buildLightControls(entitiesInScene = null, sceneSnapshot = null) {
         if (!this.isMenuOpen) return;
         let lightsByArea = {};
@@ -1091,6 +1247,7 @@ class SceneManagerCard extends HTMLElement {
         this._applySnapshotToControls(sceneSnapshot);
     }
 
+    // Refresh light row labels, sliders, toggles, and auto-selection state.
     _updateLightStates(firstRun = false) {
         if (!this.isMenuOpen) return;
         const rows = this.shadowRoot.querySelectorAll(".light-row");
@@ -1116,8 +1273,20 @@ class SceneManagerCard extends HTMLElement {
         this.shadowRoot.querySelectorAll("details").forEach(detail => { const master = detail.querySelector(".room-checkbox"); const all = detail.querySelectorAll(".light-select"); const checked = detail.querySelectorAll(".light-select:checked"); if (all.length > 0) { master.checked = checked.length > 0; master.indeterminate = checked.length > 0 && checked.length < all.length; } });
     }
 
+    // Enter edit mode for one scene and capture its original order position.
     _startEditing(entityId, name, icon, color) {
-        this.editingId = entityId; this._editingOriginalEntityId = entityId; this._editingOrderSnapshot = this._visibleSceneOrder();
+        // Scene currently being edited by the user.
+        this.editingId = entityId;
+
+        // Original scene id sent to the backend so it can preserve order on save.
+        this._editingOriginalEntityId = entityId;
+
+        // Snapshot of visible order before any save/re-render can mutate it.
+        this._editingOrderSnapshot = this._visibleSceneOrder();
+
+        // Original index sent to the backend as the stable visual position.
+        this._editingOriginalIndex = this._editingOrderSnapshot.indexOf(entityId);
+
         this.inputName.value = name; this.currentIcon = icon; this.inputColor.value = this._isHexColor(color) ? color : "#9E9E9E";
         this._renderIconPicker();
         this.saveBtn.innerHTML = `<ha-icon icon="mdi:content-save-edit"></ha-icon>`;
@@ -1129,10 +1298,12 @@ class SceneManagerCard extends HTMLElement {
         this._buildLightControls(entitiesInScene, sceneSnapshot); this._updateContent();
     }
 
+    // Leave edit mode and reset the scene form to creation defaults.
     _stopEditing() {
         this.editingId = null;
         this._editingOriginalEntityId = null;
         this._editingOrderSnapshot = null;
+        this._editingOriginalIndex = null;
         this.inputName.value = "";
         this.currentIcon = "mdi:palette";
         this.inputColor.value = "#9E9E9E";
@@ -1142,6 +1313,7 @@ class SceneManagerCard extends HTMLElement {
         this._renderIconPicker(); this._buildLightControls(null); this._updateContent();
     }
 
+    // Update the plus/close menu toggle icon and active classes.
     _updateToggleIcon() {
         if (this.isMenuOpen) {
             this.toggleIcon.setAttribute("icon", "mdi:close");
@@ -1154,12 +1326,22 @@ class SceneManagerCard extends HTMLElement {
         }
     }
 
+    // Remember the dragged scene button and configure browser drag data.
     _handleDragStart(e) { this.dragSrcEl = e.target.closest('.scene-btn'); this.dragSrcEl.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', this.dragSrcEl.dataset.entityId); }
+
+    // Allow dropping over another scene button during reorder.
     _handleDragOver(e) { if (e.preventDefault) e.preventDefault(); e.dataTransfer.dropEffect = 'move'; const target = e.target.closest('.scene-btn'); if (target && target !== this.dragSrcEl) target.classList.add('over'); return false; }
+
+    // Remove visual drop target state when the pointer leaves a scene button.
     _handleDragLeave(e) { const target = e.target.closest('.scene-btn'); if (target) target.classList.remove('over'); }
+
+    // Persist a reordered scene list after a drag-and-drop drop event.
     _handleDrop(e) { if (e.stopPropagation) e.stopPropagation(); if (e.preventDefault) e.preventDefault(); const target = e.target.closest('.scene-btn'); this.shadowRoot.querySelectorAll('.scene-btn').forEach(col => { col.classList.remove('over'); col.classList.remove('dragging'); }); if (this.dragSrcEl && target && this.dragSrcEl !== target) { const srcId = this.dragSrcEl.dataset.entityId; const targetId = target.dataset.entityId; const allBtns = Array.from(this.shadowRoot.querySelectorAll(".scene-btn")); let order = allBtns.map(b => b.dataset.entityId); const srcIndex = order.indexOf(srcId); const targetIndex = order.indexOf(targetId); if (srcIndex > -1 && targetIndex > -1) { order.splice(srcIndex, 1); order.splice(targetIndex, 0, srcId); this._saveOrder(order); this._updateContent(); } } return false; }
+
+    // Clear drag visual classes at the end of a scene drag operation.
     _handleDragEnd(e) { this.shadowRoot.querySelectorAll('.scene-btn').forEach(col => { col.classList.remove('over'); col.classList.remove('dragging'); }); }
 
+    // Open or close the creation/edit menu.
     _toggleMenu(forceOpen = null) {
         this.isMenuOpen = forceOpen !== null ? forceOpen : !this.isMenuOpen;
         if (this.isMenuOpen) {
@@ -1176,6 +1358,7 @@ class SceneManagerCard extends HTMLElement {
         this._updateContent();
     }
 
+    // Render the horizontal icon picker and wire icon selection.
     _renderIconPicker() {
         this.iconList.innerHTML = "";
         PRESET_ICONS.forEach(icon => {
@@ -1192,32 +1375,70 @@ class SceneManagerCard extends HTMLElement {
         });
     }
 
+    // Create or update a scene through the backend integration.
     async _saveScene() {
-        const name = this.inputName.value; if (!name) return alert("Nom vide !");
-        const room = this._currentRoomKey(); if (!room) return alert("Aucune pièce");
-        const color = this.inputColor.value; const iconToSave = this.currentIcon;
+        // Scene display name typed by the user.
+        const name = this.inputName.value;
+        if (!name) return alert("Nom vide !");
+
+        // Current room/order key scope used for the scene id.
+        const room = this._currentRoomKey();
+        if (!room) return alert("Aucune pièce");
+
+        // Color selected in the scene editor.
+        const color = this.inputColor.value;
+
+        // Icon selected in the scene editor.
+        const iconToSave = this.currentIcon;
 
         // Improved slug generation: remove special chars, replace spaces with _, trim _
         let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
         if (!slug) slug = "scene_" + Date.now();
 
+        // Optional scene prefix from config, normalized like the room key.
         const scenePrefix = this._scenePrefixKey();
-        const shortId = [room, scenePrefix, slug].filter(Boolean).join('_'); const newEntityId = `scene.${shortId}`;
+
+        // Short scene id used by Home Assistant scene.create.
+        const shortId = [room, scenePrefix, slug].filter(Boolean).join('_');
+
+        // Final entity id expected after the save completes.
+        const newEntityId = `scene.${shortId}`;
+
+        // Checked light rows define what the scene snapshot contains.
         const checkboxes = this.shadowRoot.querySelectorAll(".light-select:checked");
+
+        // Selected light entity ids sent to the backend for compatibility.
         const selectedLights = Array.from(checkboxes).map(cb => cb.dataset.entity);
         if (selectedLights.length === 0) return alert(`Sélectionnez au moins une lumière !`);
+
+        // Snapshot of desired scene states built from the editor controls.
         const snapshot = this._buildSceneSnapshot(selectedLights);
 
+        // Current metadata cache merged with backend registry data.
         const meta = this._loadMeta();
+
+        // Old entity id when the edit changes the generated scene id.
         const replaceEntityId = this.editingId && this.editingId !== newEntityId ? this.editingId : null;
 
         if (replaceEntityId && !confirm("Renommer la scène ?")) {
             return;
         }
+        // Original entity id is sent even without rename so the backend keeps position.
+        const originalEntityId = this._editingOriginalEntityId || this.editingId || replaceEntityId || newEntityId;
+
+        // Original zero-based index captured when editing started.
+        const originalPosition = this._editingPosition();
+
+        // Final visual order expected after the save.
         const order = this._orderAfterSave(newEntityId, replaceEntityId);
 
+        // Optimistic order avoids a visible jump while the backend registry refreshes.
+        this.cachedOrder = [...order];
+        this._optimisticOrder = [...order];
+
         try {
-            await this._hass.callService("scene_manager", "save_scene", {
+            // Service payload includes both old-style order and new atomic position fields.
+            const payload = {
                 scene_id: shortId,
                 entities: selectedLights,
                 snapshot,
@@ -1225,9 +1446,14 @@ class SceneManagerCard extends HTMLElement {
                 color: color,
                 room: room,
                 order_key: this._orderKey(),
-                replace_entity_id: replaceEntityId,
+                original_entity_id: originalEntityId,
                 order
-            });
+            };
+
+            if (replaceEntityId) payload.replace_entity_id = replaceEntityId;
+            if (originalPosition !== null) payload.position = originalPosition;
+
+            await this._hass.callService("scene_manager", "save_scene", payload);
         } catch (err) {
             console.error("scene-manager: save_scene failed", err);
             alert("Impossible de sauvegarder la scène. Consultez les journaux Home Assistant.");
@@ -1258,6 +1484,7 @@ class SceneManagerCard extends HTMLElement {
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
     }
 
+    // Render scene buttons from Home Assistant states, metadata, and optimistic cache.
     _updateContent() {
         if (!this.currentRoom) return;
         const prefix = this._sceneEntityPrefix();
@@ -1376,14 +1603,22 @@ class SceneManagerCard extends HTMLElement {
             }
         } catch (e) { /* ignore preview placement errors */ }
     }
+    // Approximate Lovelace card height in dashboard rows.
     getCardSize() { return 3; }
 }
 
 class SceneManagerEditor extends HTMLElement {
+    // Initialize editor-only state and wait for Home Assistant picker components.
     constructor() {
         super();
+
+        // Timestamp until which the editor waits for ha-entity-picker registration.
         this._pickerWaitUntil = 0;
+
+        // Timer used to retry rendering while picker components are loading.
         this._pickerWaitTimer = null;
+
+        // Whether the editor already gave up waiting for the picker in this render cycle.
         this._pickerWaitDone = false;
 
         // Watch for ha-entity-picker availability to trigger re-render when it loads
@@ -1394,6 +1629,7 @@ class SceneManagerEditor extends HTMLElement {
         }
     }
 
+    // Clear pending picker wait timers when Home Assistant removes the editor.
     disconnectedCallback() {
         if (this._pickerWaitTimer) {
             clearTimeout(this._pickerWaitTimer);
@@ -1401,15 +1637,19 @@ class SceneManagerEditor extends HTMLElement {
         }
     }
 
+    // Propagate Home Assistant state into nested entity pickers.
     set hass(hass) {
         this._hass = hass;
         if (!this.shadowRoot) return;
         this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
     }
+    // Store editor config and re-render the form.
     setConfig(config) { this._config = config; this.render(); }
+
     // propagate config-changed to HA editor (native preview will update)
     configChanged(newConfig) { this._config = newConfig; const event = new Event("config-changed", { bubbles: true, composed: true }); event.detail = { config: newConfig }; this.dispatchEvent(event); }
 
+    // Return normalized manual room entries from the current editor config.
     _getManualRooms() {
         const rooms = (this._config && Array.isArray(this._config.manual_rooms)) ? this._config.manual_rooms : [];
         return rooms.map(r => ({
@@ -1419,23 +1659,27 @@ class SceneManagerEditor extends HTMLElement {
         }));
     }
 
+    // Persist the full manual room list back into the card config.
     _setManualRooms(rooms) {
         const newConfig = { ...this._config, manual_rooms: rooms };
         this.configChanged(newConfig);
     }
 
+    // Add one empty manual room block.
     _addRoom() {
         const rooms = this._getManualRooms();
         rooms.push({ id: '', name: '', lights: [] });
         this._setManualRooms(rooms);
     }
 
+    // Remove one manual room block by index.
     _removeRoom(roomIndex) {
         const rooms = this._getManualRooms();
         rooms.splice(roomIndex, 1);
         this._setManualRooms(rooms);
     }
 
+    // Update one manual room with a partial patch.
     _updateRoom(roomIndex, patch) {
         const rooms = this._getManualRooms();
         const existing = rooms[roomIndex] || { id: '', name: '', lights: [] };
@@ -1443,6 +1687,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Add one empty light selector to a manual room.
     _addLight(roomIndex) {
         const rooms = this._getManualRooms();
         const room = rooms[roomIndex] || { id: '', name: '', lights: [] };
@@ -1451,6 +1696,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Remove one light selector from a manual room.
     _removeLight(roomIndex, lightIndex) {
         const rooms = this._getManualRooms();
         const room = rooms[roomIndex];
@@ -1460,6 +1706,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Update one manual light entity id.
     _updateLight(roomIndex, lightIndex, entityId) {
         const rooms = this._getManualRooms();
         const room = rooms[roomIndex] || { id: '', name: '', lights: [] };
@@ -1470,6 +1717,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Move a manual light one position up.
     _moveLightUp(roomIndex, lightIndex) {
         if (lightIndex <= 0) return;
         const rooms = this._getManualRooms();
@@ -1482,6 +1730,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Move a manual light one position down.
     _moveLightDown(roomIndex, lightIndex) {
         const rooms = this._getManualRooms();
         const room = rooms[roomIndex];
@@ -1494,6 +1743,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Start drag-and-drop for manual light reorder.
     _dragStart(e) {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -1503,6 +1753,7 @@ class SceneManagerEditor extends HTMLElement {
         e.target.classList.add('dragging');
     }
 
+    // Allow drag-over for manual light rows.
     _dragOver(e) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
@@ -1510,11 +1761,13 @@ class SceneManagerEditor extends HTMLElement {
         if (row) row.classList.add('over');
     }
 
+    // Clear manual light drop target styling.
     _dragLeave(e) {
         const row = e.target.closest('.light-row');
         if (row) row.classList.remove('over');
     }
 
+    // Clear manual light drag styling after drag completion.
     _dragEnd(e) {
         this.shadowRoot.querySelectorAll('.light-row').forEach(row => {
             row.classList.remove('dragging');
@@ -1522,6 +1775,7 @@ class SceneManagerEditor extends HTMLElement {
         });
     }
 
+    // Reorder manual lights after a drop inside the same room.
     _drop(e) {
         e.stopPropagation();
         e.preventDefault();
@@ -1541,6 +1795,7 @@ class SceneManagerEditor extends HTMLElement {
         this._reorderLights(srcRoomIndex, srcLightIndex, targetLightIndex);
     }
 
+    // Persist a manual light move inside one manual room.
     _reorderLights(roomIndex, oldIndex, newIndex) {
         const rooms = this._getManualRooms();
         const room = rooms[roomIndex];
@@ -1555,6 +1810,7 @@ class SceneManagerEditor extends HTMLElement {
         this._setManualRooms(rooms);
     }
 
+    // Capture focused editor control and cursor selection before re-render.
     _captureFocusState() {
         if (!this.shadowRoot) return null;
         const active = this.shadowRoot.activeElement;
@@ -1584,6 +1840,7 @@ class SceneManagerEditor extends HTMLElement {
         return state;
     }
 
+    // Restore focused editor control and cursor selection after re-render.
     _restoreFocusState(state) {
         if (!state || !this.shadowRoot) return;
         let el = null;
@@ -1613,6 +1870,7 @@ class SceneManagerEditor extends HTMLElement {
             // ignore focus errors
         }
     }
+    // Render the full graphical card editor form.
     render() {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
 
