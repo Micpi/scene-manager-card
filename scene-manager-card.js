@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.3
+// Version: 1.1.4
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.3';
+const VERSION = '1.1.4';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -126,6 +126,7 @@ class SceneManagerCard extends HTMLElement {
         this.entitiesRegistry = [];
         this.cachedOrder = [];
         this.cachedMeta = {};
+        this._sceneIconColors = {};
         this.shouldUpdate = true;
         this._lastStorageUpdate = null;
         this._lastStorageRoom = null;
@@ -151,7 +152,7 @@ class SceneManagerCard extends HTMLElement {
           .toggle-btn.save-mode { background: #4CAF50; color: white; opacity: 1; box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4); }
           .scene-list { display: flex; gap: var(--scene-manager-btn-spacing, 12px); overflow-x: auto; padding: 4px 16px 25px 16px; scroll-behavior: smooth; scrollbar-width: none; min-height: calc(${this.btnHeight} + 10px); scroll-snap-type: x mandatory; justify-content: ${this.alignment}; }
           .scene-list::-webkit-scrollbar { display: none; }
-          .scene-btn { position: relative; color: var(--scene-manager-btn-text, var(--primary-text-color)); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--primary-text-color); border-radius: var(--scene-manager-btn-border-radius, 16px); box-shadow: var(--scene-manager-btn-shadow, none); }
+          .scene-btn { position: relative; color: var(--scene-manager-btn-text, var(--primary-text-color)); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--scene-manager-default-icon-color, var(--primary-text-color)); border-radius: var(--scene-manager-btn-border-radius, 16px); box-shadow: var(--scene-manager-btn-shadow, none); }
           #creationArea { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.3s ease-out, margin 0.3s; opacity: 0; background: var(--scene-manager-creation-bg, var(--card-background-color, white)); border-radius: 16px; margin-top: 0px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid transparent; }
           #creationArea.open { max-height: 800px; opacity: 1; padding: 16px; margin-top: 0px; border: 1px solid var(--divider-color, #eee); overflow-y: auto; }
           .scene-btn.being-edited { border: 2px solid #4CAF50 !important; box-shadow: 0 0 15px rgba(76, 175, 80, 0.5) !important; transform: scale(0.98); }
@@ -167,7 +168,7 @@ class SceneManagerCard extends HTMLElement {
           .shape-rounded { border-radius: 16px; }
           .shape-box { border-radius: 8px; }
           .shape-circle { border-radius: 50%; width: ${this.btnWidth}; height: ${this.btnWidth}; }
-          .scene-btn ha-icon { pointer-events: none; color: var(--btn-icon-color); transition: color 0.3s; } 
+          .scene-btn > ha-icon { pointer-events: none; color: var(--btn-icon-color); transition: color 0.3s; }
           .scene-btn span { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; pointer-events: none; color: var(--scene-manager-btn-text, var(--primary-text-color)); }
           .scene-btn:active { transform: scale(0.92); }
           .scene-btn.activated { border-color: #4CAF50; box-shadow: 0 0 10px rgba(76, 175, 80, 0.2); }
@@ -175,6 +176,7 @@ class SceneManagerCard extends HTMLElement {
           .scene-btn.dragging { opacity: 0.4; border: 2px dashed var(--primary-color); transform: scale(0.95); }
           .scene-btn.over { border: 2px solid var(--primary-color); transform: scale(1.05); }
           .action-badge { position: absolute; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3); opacity: 0; transform: scale(0); transition: all 0.3s; pointer-events: auto; z-index: 10; cursor: pointer; color: white; }
+          .action-badge ha-icon { color: #ffffff !important; }
           .delete-badge { top: -6px; right: -6px; background-color: #f44336; }
           .edit-badge { bottom: -8px; left: 50%; transform: translateX(-50%) scale(0); background-color: var(--primary-color, #03a9f4); }
           .shape-circle .delete-badge { top: 0; right: 0; } .shape-circle .edit-badge { bottom: 0; }
@@ -204,13 +206,7 @@ class SceneManagerCard extends HTMLElement {
           .live-mode-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
           .live-mode-title { font-size: 13px; font-weight: 600; white-space: nowrap; }
           .live-mode-state { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
-          .live-switch { position: relative; width: 44px; height: 24px; flex: 0 0 44px; display: inline-flex; align-items: center; cursor: pointer; }
-          .live-switch input { opacity: 0; width: 0; height: 0; }
-          .live-slider { position: absolute; inset: 0; border-radius: 999px; background: var(--disabled-text-color, #bdbdbd); transition: background 0.2s; }
-          .live-slider::before { content: ""; position: absolute; width: 20px; height: 20px; left: 2px; top: 2px; border-radius: 50%; background: var(--card-background-color, white); box-shadow: 0 1px 3px rgba(0,0,0,0.25); transition: transform 0.2s; }
-          .live-switch input:checked + .live-slider { background: var(--primary-color, #03a9f4); }
-          .live-switch input:checked + .live-slider::before { transform: translateX(20px); }
-          .live-switch input:disabled + .live-slider { opacity: 0.55; cursor: wait; }
+          .live-mode-switch { flex: 0 0 auto; }
           .icon-picker { display: flex; gap: 10px; overflow-x: auto; padding: 8px 4px 15px 4px; scrollbar-width: thin; }
           .icon-option { background: var(--secondary-background-color, #eee); color: var(--primary-text-color); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border: 2px solid transparent; transition: all 0.2s; }
           .icon-option.selected { background: var(--card-background-color, white); color: var(--primary-color); border-color: var(--primary-color); transform: scale(1.15); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
@@ -233,10 +229,7 @@ class SceneManagerCard extends HTMLElement {
                   <span class="live-mode-state" id="liveModeState">Désactivé</span>
                 </div>
               </div>
-              <label class="live-switch" title="Activer ou désactiver le mode live">
-                <input type="checkbox" id="liveModeToggle">
-                <span class="live-slider"></span>
-              </label>
+              <ha-switch class="live-mode-switch" id="liveModeToggle"></ha-switch>
             </div>
             <div id="mainLightsContainer"></div>
             <div class="icon-picker" id="iconList"></div>
@@ -344,7 +337,7 @@ class SceneManagerCard extends HTMLElement {
 
             card.style.setProperty('--scene-manager-card-bg', cardBg);
             card.style.setProperty('--scene-manager-btn-bg', btnBg);
-            card.style.setProperty('--btn-icon-color', btnIcon);
+            card.style.setProperty('--scene-manager-default-icon-color', btnIcon);
             card.style.setProperty('--scene-manager-btn-text', btnText);
             if (titleIconColor) card.style.setProperty('--scene-manager-title-icon-color', titleIconColor); else card.style.removeProperty('--scene-manager-title-icon-color');
             card.style.setProperty('--scene-manager-creation-bg', menuBg);
@@ -762,6 +755,7 @@ class SceneManagerCard extends HTMLElement {
                     this.cachedOrder = allOrders[this._orderKey()] || [];
                 }
                 this.cachedMeta = stateObj.attributes.meta || {};
+                this._rememberSceneIconColors(this.cachedMeta);
                 this.shouldUpdate = true;
             }
         }
@@ -777,8 +771,28 @@ class SceneManagerCard extends HTMLElement {
         }).catch(err => console.error("scene-manager: reorder_scenes failed", err));
     }
     _loadOrder() { return this.cachedOrder; }
-    _saveMeta(meta) { this.cachedMeta = meta; this.shouldUpdate = true; }
+    _saveMeta(meta) {
+        this.cachedMeta = meta;
+        this._rememberSceneIconColors(meta);
+        this.shouldUpdate = true;
+    }
     _loadMeta() { return this.cachedMeta; }
+    _rememberSceneIconColors(meta) {
+        if (!meta || typeof meta !== "object") return;
+        Object.entries(meta).forEach(([entityId, item]) => {
+            if (!item || typeof item !== "object" || !item.color) return;
+            this._sceneIconColors[entityId] = item.color;
+        });
+    }
+    _sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene) {
+        if (isEditingThisScene) return this.inputColor.value;
+        const storedColor = localData?.color || stateAttributes.theme_color || this._sceneIconColors[entityId];
+        if (storedColor) {
+            this._sceneIconColors[entityId] = storedColor;
+            return storedColor;
+        }
+        return "var(--scene-manager-default-icon-color, var(--primary-text-color))";
+    }
     _getSceneEntities(sceneId) {
         const sceneObj = this._hass.states[sceneId];
         const entities = sceneObj && sceneObj.attributes.entity_id;
@@ -1147,7 +1161,7 @@ class SceneManagerCard extends HTMLElement {
             const localData = meta[entityId];
             const stateAttributes = this._hass.states[entityId].attributes;
             const isEditingThisScene = this.editingId === entityId;
-            const themeColor = isEditingThisScene ? this.inputColor.value : (localData?.color || stateAttributes.theme_color || "var(--primary-text-color)");
+            const themeColor = this._sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene);
             const icon = isEditingThisScene ? this.currentIcon : (localData?.icon || stateAttributes.icon || "mdi:palette");
 
             btn.style.setProperty('--btn-icon-color', themeColor);
