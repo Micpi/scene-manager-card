@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.8
+// Version: 1.1.9
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.8';
+const VERSION = '1.1.9';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -781,7 +781,7 @@ class SceneManagerCard extends HTMLElement {
     _updateStorageEntity() { this._checkServerUpdates(); }
     _saveOrder(orderedIds) {
         this.cachedOrder = orderedIds.filter(Boolean);
-        this._hass.callService("scene_manager", "reorder_scenes", {
+        return this._hass.callService("scene_manager", "reorder_scenes", {
             room: this._currentRoomKey(),
             order_key: this._orderKey(),
             order: this.cachedOrder
@@ -835,7 +835,7 @@ class SceneManagerCard extends HTMLElement {
     }
     _sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene) {
         if (isEditingThisScene) return this.inputColor.value;
-        const storedColor = localData?.color || this._storedSceneIconColor(entityId) || stateAttributes.theme_color;
+        const storedColor = localData?.color || stateAttributes.theme_color || this._storedSceneIconColor(entityId);
         if (storedColor) {
             this._rememberSceneIconColor(entityId, storedColor);
             return storedColor;
@@ -845,8 +845,8 @@ class SceneManagerCard extends HTMLElement {
     _scenePickerColor(entityId, localData, stateAttributes) {
         const candidates = [
             localData?.color,
-            this._storedSceneIconColor(entityId),
-            stateAttributes.theme_color
+            stateAttributes.theme_color,
+            this._storedSceneIconColor(entityId)
         ];
         return candidates.find(color => this._isHexColor(color)) || "#9E9E9E";
     }
@@ -1186,6 +1186,7 @@ class SceneManagerCard extends HTMLElement {
         if (replaceEntityId && !confirm("Renommer la scène ?")) {
             return;
         }
+        const order = this._orderAfterSave(newEntityId, replaceEntityId);
 
         try {
             await this._hass.callService("scene_manager", "save_scene", {
@@ -1196,7 +1197,8 @@ class SceneManagerCard extends HTMLElement {
                 color: color,
                 room: room,
                 order_key: this._orderKey(),
-                replace_entity_id: replaceEntityId
+                replace_entity_id: replaceEntityId,
+                order
             });
         } catch (err) {
             console.error("scene-manager: save_scene failed", err);
@@ -1219,8 +1221,8 @@ class SceneManagerCard extends HTMLElement {
         this._rememberSceneIconColor(newEntityId, color);
         this._saveMeta(meta);
 
-        let order = this._orderAfterSave(newEntityId, replaceEntityId);
-        this._saveOrder(order);
+        this.cachedOrder = order;
+        await this._saveOrder(order);
 
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
     }
