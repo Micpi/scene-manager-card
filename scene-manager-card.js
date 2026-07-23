@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.7
+// Version: 1.1.8
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.7';
+const VERSION = '1.1.8';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -127,6 +127,8 @@ class SceneManagerCard extends HTMLElement {
         this.cachedOrder = [];
         this.cachedMeta = {};
         this._sceneIconColors = {};
+        this._editingOrderSnapshot = null;
+        this._editingOriginalEntityId = null;
         this.shouldUpdate = true;
         this._lastStorageUpdate = null;
         this._lastStorageRoom = null;
@@ -804,7 +806,7 @@ class SceneManagerCard extends HTMLElement {
     }
     _rememberSceneIconColor(entityId, color) {
         if (!entityId || !color || typeof color !== "string") return;
-        if (!color.startsWith("#")) return;
+        if (!this._isHexColor(color)) return;
         this._sceneIconColors[entityId] = color;
         try {
             localStorage.setItem(this._sceneColorStorageKey(entityId), color);
@@ -828,6 +830,9 @@ class SceneManagerCard extends HTMLElement {
         } catch (e) { /* ignore storage errors */ }
         return null;
     }
+    _isHexColor(color) {
+        return typeof color === "string" && /^#[0-9a-fA-F]{6}$/.test(color);
+    }
     _sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene) {
         if (isEditingThisScene) return this.inputColor.value;
         const storedColor = localData?.color || this._storedSceneIconColor(entityId) || stateAttributes.theme_color;
@@ -836,6 +841,39 @@ class SceneManagerCard extends HTMLElement {
             return storedColor;
         }
         return "var(--scene-manager-default-icon-color, var(--primary-text-color))";
+    }
+    _scenePickerColor(entityId, localData, stateAttributes) {
+        const candidates = [
+            localData?.color,
+            this._storedSceneIconColor(entityId),
+            stateAttributes.theme_color
+        ];
+        return candidates.find(color => this._isHexColor(color)) || "#9E9E9E";
+    }
+    _visibleSceneOrder() {
+        const order = Array.from(this.shadowRoot.querySelectorAll(".scene-btn"))
+            .map(btn => btn.dataset.entityId)
+            .filter(Boolean);
+        return order.length > 0 ? order : [...this._loadOrder()];
+    }
+    _orderAfterSave(newEntityId, replaceEntityId) {
+        const originalEntityId = this._editingOriginalEntityId || this.editingId || replaceEntityId || newEntityId;
+        const snapshot = Array.isArray(this._editingOrderSnapshot) && this._editingOrderSnapshot.length > 0
+            ? [...this._editingOrderSnapshot]
+            : this._visibleSceneOrder();
+
+        const originalIndex = snapshot.indexOf(originalEntityId);
+        const baseOrder = snapshot
+            .filter(id => id && id !== replaceEntityId && id !== newEntityId);
+
+        if (this.editingId) {
+            const insertAt = originalIndex >= 0 ? Math.min(originalIndex, baseOrder.length) : baseOrder.length;
+            baseOrder.splice(insertAt, 0, newEntityId);
+            return baseOrder;
+        }
+
+        baseOrder.push(newEntityId);
+        return baseOrder;
     }
     _getSceneEntities(sceneId) {
         const sceneObj = this._hass.states[sceneId];
@@ -1051,7 +1089,8 @@ class SceneManagerCard extends HTMLElement {
     }
 
     _startEditing(entityId, name, icon, color) {
-        this.editingId = entityId; this.inputName.value = name; this.currentIcon = icon; this.inputColor.value = color || "#9E9E9E";
+        this.editingId = entityId; this._editingOriginalEntityId = entityId; this._editingOrderSnapshot = this._visibleSceneOrder();
+        this.inputName.value = name; this.currentIcon = icon; this.inputColor.value = this._isHexColor(color) ? color : "#9E9E9E";
         this._renderIconPicker();
         this.saveBtn.innerHTML = `<ha-icon icon="mdi:content-save-edit"></ha-icon>`;
         this.saveBtn.classList.add("save-mode");
@@ -1064,6 +1103,8 @@ class SceneManagerCard extends HTMLElement {
 
     _stopEditing() {
         this.editingId = null;
+        this._editingOriginalEntityId = null;
+        this._editingOrderSnapshot = null;
         this.inputName.value = "";
         this.currentIcon = "mdi:palette";
         this.inputColor.value = "#9E9E9E";
@@ -1178,12 +1219,7 @@ class SceneManagerCard extends HTMLElement {
         this._rememberSceneIconColor(newEntityId, color);
         this._saveMeta(meta);
 
-        let order = this._loadOrder().filter(id => id !== replaceEntityId);
-        if (this.editingId && this.editingId === newEntityId) {
-            if (!order.includes(newEntityId)) order.push(newEntityId);
-        } else if (!order.includes(newEntityId)) {
-            order.push(newEntityId);
-        }
+        let order = this._orderAfterSave(newEntityId, replaceEntityId);
         this._saveOrder(order);
 
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
@@ -1255,7 +1291,7 @@ class SceneManagerCard extends HTMLElement {
                 e.stopPropagation();
                 if (this.editingId === entityId) { this._stopEditing(); }
                 else {
-                    const sceneColor = this._hass.states[entityId].attributes.theme_color;
+                    const sceneColor = this._scenePickerColor(entityId, localData, stateAttributes);
                     this._startEditing(entityId, name, icon, sceneColor);
                 }
             });
