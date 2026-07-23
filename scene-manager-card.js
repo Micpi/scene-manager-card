@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.9
+// Version: 1.1.10
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.9';
+const VERSION = '1.1.10';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -127,6 +127,9 @@ class SceneManagerCard extends HTMLElement {
         this.cachedOrder = [];
         this.cachedMeta = {};
         this._sceneIconColors = {};
+        this._optimisticMeta = {};
+        this._optimisticOrder = null;
+        this._optimisticScenes = {};
         this._editingOrderSnapshot = null;
         this._editingOriginalEntityId = null;
         this.shouldUpdate = true;
@@ -754,8 +757,8 @@ class SceneManagerCard extends HTMLElement {
         const entityId = this._getStorageEntityId();
         const stateObj = this._hass.states[entityId];
         if (!stateObj) {
-            this.cachedOrder = [];
-            this.cachedMeta = {};
+            this.cachedOrder = this._optimisticOrder ? [...this._optimisticOrder] : [];
+            this.cachedMeta = this._mergeOptimisticMeta({});
             return;
         }
         if (
@@ -766,12 +769,17 @@ class SceneManagerCard extends HTMLElement {
             this._lastStorageRoom = this.currentRoom;
             if (stateObj.attributes) {
                 const allOrders = stateObj.attributes.order || {};
+                let backendOrder = [];
                 if (Array.isArray(allOrders)) {
-                    this.cachedOrder = allOrders;
+                    backendOrder = allOrders;
                 } else {
-                    this.cachedOrder = allOrders[this._orderKey()] || [];
+                    backendOrder = allOrders[this._orderKey()] || [];
                 }
-                this.cachedMeta = stateObj.attributes.meta || {};
+                if (this._optimisticOrder && this._sameOrder(backendOrder, this._optimisticOrder)) {
+                    this._optimisticOrder = null;
+                }
+                this.cachedOrder = this._optimisticOrder ? [...this._optimisticOrder] : backendOrder;
+                this.cachedMeta = this._mergeOptimisticMeta(stateObj.attributes.meta || {});
                 this._rememberSceneIconColors(this.cachedMeta);
                 this.shouldUpdate = true;
             }
@@ -781,6 +789,7 @@ class SceneManagerCard extends HTMLElement {
     _updateStorageEntity() { this._checkServerUpdates(); }
     _saveOrder(orderedIds) {
         this.cachedOrder = orderedIds.filter(Boolean);
+        this._optimisticOrder = [...this.cachedOrder];
         return this._hass.callService("scene_manager", "reorder_scenes", {
             room: this._currentRoomKey(),
             order_key: this._orderKey(),
@@ -794,6 +803,25 @@ class SceneManagerCard extends HTMLElement {
         this.shouldUpdate = true;
     }
     _loadMeta() { return this.cachedMeta; }
+    _sameOrder(left, right) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+        return left.every((value, index) => value === right[index]);
+    }
+    _mergeOptimisticMeta(backendMeta) {
+        const backend = backendMeta && typeof backendMeta === "object" ? backendMeta : {};
+        Object.entries(this._optimisticMeta).forEach(([entityId, item]) => {
+            const backendItem = backend[entityId];
+            if (
+                backendItem &&
+                backendItem.color === item.color &&
+                backendItem.icon === item.icon
+            ) {
+                delete this._optimisticMeta[entityId];
+                delete this._optimisticScenes[entityId];
+            }
+        });
+        return { ...backend, ...this._optimisticMeta };
+    }
     _rememberSceneIconColors(meta) {
         if (!meta || typeof meta !== "object") return;
         Object.entries(meta).forEach(([entityId, item]) => {
@@ -1209,6 +1237,8 @@ class SceneManagerCard extends HTMLElement {
         if (replaceEntityId) {
             delete meta[replaceEntityId];
             this._forgetSceneIconColor(replaceEntityId);
+            delete this._optimisticMeta[replaceEntityId];
+            delete this._optimisticScenes[replaceEntityId];
         }
         const publicSnapshot = {};
         Object.entries(snapshot).forEach(([eid, item]) => {
@@ -1218,10 +1248,11 @@ class SceneManagerCard extends HTMLElement {
             };
         });
         meta[newEntityId] = { icon: iconToSave, color: color, room: room, order_key: this._orderKey(), entities: publicSnapshot };
+        this._optimisticMeta[newEntityId] = meta[newEntityId];
+        this._optimisticScenes[newEntityId] = true;
         this._rememberSceneIconColor(newEntityId, color);
         this._saveMeta(meta);
 
-        this.cachedOrder = order;
         await this._saveOrder(order);
 
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
@@ -1230,7 +1261,12 @@ class SceneManagerCard extends HTMLElement {
     _updateContent() {
         if (!this.currentRoom) return;
         const prefix = this._sceneEntityPrefix();
-        let scenes = Object.keys(this._hass.states).filter((eid) => eid.startsWith(prefix) && this._hass.states[eid].state !== 'unavailable');
+        let scenes = [
+            ...new Set([
+                ...Object.keys(this._hass.states).filter((eid) => eid.startsWith(prefix) && this._hass.states[eid].state !== 'unavailable'),
+                ...Object.keys(this._optimisticScenes).filter((eid) => eid.startsWith(prefix))
+            ])
+        ];
         const storedOrder = this._loadOrder(); const meta = this._loadMeta();
         if (storedOrder.length > 0) { scenes.sort((a, b) => { const indexA = storedOrder.indexOf(a); const indexB = storedOrder.indexOf(b); return (indexA === -1 ? 9999 : indexA) - (indexB === -1 ? 9999 : indexB); }); }
 
@@ -1245,7 +1281,7 @@ class SceneManagerCard extends HTMLElement {
             btn.className = `scene-btn style-${btnStyle} shape-${btnShape}`;
 
             const localData = meta[entityId];
-            const stateAttributes = this._hass.states[entityId].attributes;
+            const stateAttributes = this._hass.states[entityId]?.attributes || {};
             const isEditingThisScene = this.editingId === entityId;
             const themeColor = this._sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene);
             const icon = isEditingThisScene ? this.currentIcon : (localData?.icon || stateAttributes.icon || "mdi:palette");
@@ -1283,7 +1319,7 @@ class SceneManagerCard extends HTMLElement {
                         alert("Impossible de supprimer la scène. Consultez les journaux Home Assistant.");
                         return;
                     }
-                    const m = this._loadMeta(); delete m[entityId]; this._forgetSceneIconColor(entityId); this._saveMeta(m);
+                    const m = this._loadMeta(); delete m[entityId]; this._forgetSceneIconColor(entityId); delete this._optimisticMeta[entityId]; delete this._optimisticScenes[entityId]; this._saveMeta(m);
                     this.cachedOrder = this.cachedOrder.filter(id => id !== entityId);
                     btn.style.opacity = "0"; btn.style.width = "0px"; setTimeout(() => btn.remove(), 300);
                     if (this.editingId === entityId) this._stopEditing();
