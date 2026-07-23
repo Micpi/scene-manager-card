@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.4
+// Version: 1.1.5
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.4';
+const VERSION = '1.1.5';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -37,7 +37,7 @@ const PRESET_ICONS = [
 
 class SceneManagerCard extends HTMLElement {
     static getConfigElement() { return document.createElement("scene-manager-editor"); }
-    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '', scene_prefix: '', activation_transition: 2, auto_select_lights: true, show_empty: true, empty_text: 'Aucune scène', respect_live_mode: true, live_mode_entity: DEFAULT_LIVE_MODE_ENTITY_ID, action_source: 'card', fallback_to_scene_service: true }; }
+    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '', button_text_color: '', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '', scene_prefix: '', activation_transition: 2, auto_select_lights: true, show_empty: true, empty_text: 'Aucune scène', respect_live_mode: true, live_mode_entity: DEFAULT_LIVE_MODE_ENTITY_ID, action_source: 'card', fallback_to_scene_service: true }; }
 
     set hass(hass) {
         this._hass = hass;
@@ -151,6 +151,7 @@ class SceneManagerCard extends HTMLElement {
           .toggle-btn.active { background: rgba(255, 0, 0, 0.1); color: #f44336; opacity: 1; transform: rotate(0deg); }
           .toggle-btn.save-mode { background: #4CAF50; color: white; opacity: 1; box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4); }
           .scene-list { display: flex; gap: var(--scene-manager-btn-spacing, 12px); overflow-x: auto; padding: 4px 16px 25px 16px; scroll-behavior: smooth; scrollbar-width: none; min-height: calc(${this.btnHeight} + 10px); scroll-snap-type: x mandatory; justify-content: ${this.alignment}; }
+          .scene-list.edit-mode { padding-bottom: 38px; }
           .scene-list::-webkit-scrollbar { display: none; }
           .scene-btn { position: relative; color: var(--scene-manager-btn-text, var(--primary-text-color)); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--scene-manager-default-icon-color, var(--primary-text-color)); border-radius: var(--scene-manager-btn-border-radius, 16px); box-shadow: var(--scene-manager-btn-shadow, none); }
           #creationArea { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.3s ease-out, margin 0.3s; opacity: 0; background: var(--scene-manager-creation-bg, var(--card-background-color, white)); border-radius: 16px; margin-top: 0px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid transparent; }
@@ -178,8 +179,8 @@ class SceneManagerCard extends HTMLElement {
           .action-badge { position: absolute; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.3); opacity: 0; transform: scale(0); transition: all 0.3s; pointer-events: auto; z-index: 10; cursor: pointer; color: white; }
           .action-badge ha-icon { color: #ffffff !important; }
           .delete-badge { top: -6px; right: -6px; background-color: #f44336; }
-          .edit-badge { bottom: -8px; left: 50%; transform: translateX(-50%) scale(0); background-color: var(--primary-color, #03a9f4); }
-          .shape-circle .delete-badge { top: 0; right: 0; } .shape-circle .edit-badge { bottom: 0; }
+          .edit-badge { bottom: -20px; left: 50%; transform: translateX(-50%) scale(0); background-color: var(--primary-color, #03a9f4); }
+          .shape-circle .delete-badge { top: 0; right: 0; } .shape-circle .edit-badge { bottom: -14px; }
           .scene-list.edit-mode .action-badge { opacity: 1; transform: scale(1); }
           .scene-list.edit-mode .edit-badge { opacity: 1; transform: translateX(-50%) scale(1); }
           .empty { margin: auto; color: var(--secondary-text-color); padding: 10px; font-style: italic; }
@@ -321,8 +322,8 @@ class SceneManagerCard extends HTMLElement {
 
             // Button colors
             const btnBg = cfg.button_bg_color || 'var(--secondary-background-color, #eee)';
-            const btnIcon = cfg.button_icon_color || 'var(--primary-text-color)';
-            const btnText = cfg.button_text_color || 'var(--primary-text-color)';
+            const btnIcon = this._themeAwareButtonColor(cfg.button_icon_color);
+            const btnText = this._themeAwareButtonColor(cfg.button_text_color);
 
             // Title icon color and title style
             const titleIconColor = cfg.title_icon_color || '';
@@ -356,6 +357,14 @@ class SceneManagerCard extends HTMLElement {
         } catch (e) {
             console.warn('scene-manager: _applyAppearance error', e);
         }
+    }
+
+    _themeAwareButtonColor(value) {
+        const raw = (value || '').toString().trim();
+        if (!raw || raw === 'theme' || raw.toLowerCase() === '#000000') {
+            return 'var(--primary-text-color)';
+        }
+        return raw;
     }
 
     _renderHeader() {
@@ -1732,10 +1741,10 @@ class SceneManagerEditor extends HTMLElement {
                 else if (targetId === 'card_background_color') defaultValue = '#ffffff';
                 else if (targetId === 'menu_background_color') defaultValue = '#ffffff';
                 else if (targetId === 'button_bg_color') defaultValue = '#eeeeee';
-                else if (targetId === 'button_icon_color') defaultValue = '#000000';
-                else if (targetId === 'button_text_color') defaultValue = '#000000';
-                input.value = defaultValue;
-                if (preview) preview.style.backgroundColor = defaultValue || '#000000';
+                else if (targetId === 'button_icon_color') defaultValue = '';
+                else if (targetId === 'button_text_color') defaultValue = '';
+                input.value = defaultValue || '#000000';
+                if (preview) preview.style.backgroundColor = defaultValue || 'var(--primary-text-color)';
                 const newConfig = { ...this._config };
                 newConfig[targetId] = defaultValue;
                 this.configChanged(newConfig);
