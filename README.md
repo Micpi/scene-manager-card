@@ -2,7 +2,7 @@
 
 Scene Manager Card est la carte Lovelace pour piloter **Scene Manager Ultimate**. Elle est publiee separement de l'integration afin de pouvoir mettre a jour l'interface via HACS sans mettre a jour le backend.
 
-![Version](https://img.shields.io/badge/version-1.1.6-blue)
+![Version](https://img.shields.io/badge/version-1.1.7-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Card-orange)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Lovelace-41BDF5)
 
@@ -32,6 +32,7 @@ Depuis `v1.1.3`, il ne revient plus automatiquement a l'etat precedent si Home A
 Depuis `v1.1.4`, les badges modifier/supprimer restent blancs, le toggle live utilise le style natif du theme, et les couleurs des scenes sont preservees pendant l'edition de la carte.
 Depuis `v1.1.5`, le badge modifier est place plus bas et les couleurs par defaut des icones/textes de scenes suivent le theme clair/sombre.
 Depuis `v1.1.6`, la ligne couleur/nom/enregistrer du menu d'edition est responsive pour rester dans le champ sur iPhone.
+Depuis `v1.1.7`, les couleurs personnalisees des icones de scenes sont preservees apres recreation de la carte, notamment lors du passage clair/sombre.
 
 ## Configuration rapide
 

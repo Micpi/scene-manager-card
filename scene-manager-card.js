@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.6
+// Version: 1.1.7
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.1.6';
+const VERSION = '1.1.7';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 const DEFAULT_LIVE_MODE_ENTITY_ID = "switch.scene_manager_live_mode";
 
@@ -796,14 +796,43 @@ class SceneManagerCard extends HTMLElement {
         if (!meta || typeof meta !== "object") return;
         Object.entries(meta).forEach(([entityId, item]) => {
             if (!item || typeof item !== "object" || !item.color) return;
-            this._sceneIconColors[entityId] = item.color;
+            this._rememberSceneIconColor(entityId, item.color);
         });
+    }
+    _sceneColorStorageKey(entityId) {
+        return `scene_manager_scene_color:${entityId}`;
+    }
+    _rememberSceneIconColor(entityId, color) {
+        if (!entityId || !color || typeof color !== "string") return;
+        if (!color.startsWith("#")) return;
+        this._sceneIconColors[entityId] = color;
+        try {
+            localStorage.setItem(this._sceneColorStorageKey(entityId), color);
+        } catch (e) { /* ignore storage errors */ }
+    }
+    _forgetSceneIconColor(entityId) {
+        if (!entityId) return;
+        delete this._sceneIconColors[entityId];
+        try {
+            localStorage.removeItem(this._sceneColorStorageKey(entityId));
+        } catch (e) { /* ignore storage errors */ }
+    }
+    _storedSceneIconColor(entityId) {
+        if (this._sceneIconColors[entityId]) return this._sceneIconColors[entityId];
+        try {
+            const stored = localStorage.getItem(this._sceneColorStorageKey(entityId));
+            if (stored) {
+                this._sceneIconColors[entityId] = stored;
+                return stored;
+            }
+        } catch (e) { /* ignore storage errors */ }
+        return null;
     }
     _sceneIconColor(entityId, localData, stateAttributes, isEditingThisScene) {
         if (isEditingThisScene) return this.inputColor.value;
-        const storedColor = localData?.color || stateAttributes.theme_color || this._sceneIconColors[entityId];
+        const storedColor = localData?.color || this._storedSceneIconColor(entityId) || stateAttributes.theme_color;
         if (storedColor) {
-            this._sceneIconColors[entityId] = storedColor;
+            this._rememberSceneIconColor(entityId, storedColor);
             return storedColor;
         }
         return "var(--scene-manager-default-icon-color, var(--primary-text-color))";
@@ -1134,7 +1163,10 @@ class SceneManagerCard extends HTMLElement {
             return;
         }
 
-        if (replaceEntityId) delete meta[replaceEntityId];
+        if (replaceEntityId) {
+            delete meta[replaceEntityId];
+            this._forgetSceneIconColor(replaceEntityId);
+        }
         const publicSnapshot = {};
         Object.entries(snapshot).forEach(([eid, item]) => {
             publicSnapshot[eid] = {
@@ -1143,6 +1175,7 @@ class SceneManagerCard extends HTMLElement {
             };
         });
         meta[newEntityId] = { icon: iconToSave, color: color, room: room, order_key: this._orderKey(), entities: publicSnapshot };
+        this._rememberSceneIconColor(newEntityId, color);
         this._saveMeta(meta);
 
         let order = this._loadOrder().filter(id => id !== replaceEntityId);
@@ -1212,7 +1245,7 @@ class SceneManagerCard extends HTMLElement {
                         alert("Impossible de supprimer la scène. Consultez les journaux Home Assistant.");
                         return;
                     }
-                    const m = this._loadMeta(); delete m[entityId]; this._saveMeta(m);
+                    const m = this._loadMeta(); delete m[entityId]; this._forgetSceneIconColor(entityId); this._saveMeta(m);
                     this.cachedOrder = this.cachedOrder.filter(id => id !== entityId);
                     btn.style.opacity = "0"; btn.style.width = "0px"; setTimeout(() => btn.remove(), 300);
                     if (this.editingId === entityId) this._stopEditing();
