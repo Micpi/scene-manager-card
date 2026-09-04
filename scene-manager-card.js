@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.13
+// Version: 1.1.14
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Card version displayed in the browser console and aligned with HACS releases.
-const VERSION = '1.1.13';
+const VERSION = '1.1.14';
 
 // Backend registry sensor that exposes metadata, scene order, and live mode state.
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
@@ -276,8 +276,13 @@ class SceneManagerCard extends HTMLElement {
           .light-row:last-child { border-bottom: none; }
           .light-select { width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color); margin-left: 10px; }
           .light-name { font-size: 13px; font-weight: 500; width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .brightness-control { position: relative; flex: 1; min-width: 80px; display: flex; align-items: center; }
           input[type=range] { flex: 1; -webkit-appearance: none; height: 6px; border-radius: 3px; background: #ddd; outline: none; }
           input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color); cursor: pointer; }
+          input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--primary-color); cursor: pointer; }
+          .brightness-value { position: absolute; left: clamp(22px, var(--slider-position, 0%), calc(100% - 22px)); bottom: calc(100% + 10px); transform: translateX(-50%) translateY(4px); min-width: 38px; padding: 5px 7px; border-radius: 7px; background: var(--primary-text-color, #212121); color: var(--card-background-color, #fff); font-size: 12px; font-weight: 700; line-height: 1; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.28); opacity: 0; visibility: hidden; pointer-events: none; z-index: 20; transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s; }
+          .brightness-value::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: var(--primary-text-color, #212121); }
+          .brightness-control.show-value .brightness-value { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
           .light-toggle { cursor: pointer; color: var(--disabled-text-color, #bdbdbd); }
           .light-toggle.on { color: var(--primary-color, #ff9800); }
           .live-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--divider-color, #eee); border-radius: 8px; background: rgba(var(--rgb-primary-color), 0.04); }
@@ -1070,6 +1075,40 @@ class SceneManagerCard extends HTMLElement {
         if (!stateObj || !stateObj.attributes) return 0;
         return stateObj.attributes.brightness ? Math.round((stateObj.attributes.brightness / 255) * 100) : (stateObj.state === "on" ? 100 : 0);
     }
+    // Keep the floating brightness percentage aligned with the slider thumb.
+    _updateBrightnessBubble(slider, visible = null) {
+        if (!slider || !slider.parentElement) return;
+        const control = slider.parentElement;
+        const bubble = control.querySelector('.brightness-value');
+        if (!bubble) return;
+        const min = Number(slider.min || 0);
+        const max = Number(slider.max || 100);
+        const value = Number(slider.value || 0);
+        const safeValue = Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
+        const position = max > min ? ((safeValue - min) / (max - min)) * 100 : 0;
+        bubble.textContent = `${Math.round(safeValue)}%`;
+        control.style.setProperty('--slider-position', `${position}%`);
+        if (visible !== null) control.classList.toggle('show-value', visible);
+    }
+    // Show the percentage while a brightness slider is dragged or keyboard-adjusted.
+    _bindBrightnessBubble(slider) {
+        if (!slider || slider.dataset.bubbleBound === 'true') return;
+        slider.dataset.bubbleBound = 'true';
+        const show = () => this._updateBrightnessBubble(slider, true);
+        const hide = () => this._updateBrightnessBubble(slider, false);
+        slider.addEventListener('pointerdown', show);
+        slider.addEventListener('input', show);
+        slider.addEventListener('pointerup', hide);
+        slider.addEventListener('pointercancel', hide);
+        slider.addEventListener('change', hide);
+        slider.addEventListener('blur', hide);
+        slider.addEventListener('keydown', show);
+        slider.addEventListener('keyup', () => {
+            clearTimeout(slider._brightnessBubbleTimer);
+            slider._brightnessBubbleTimer = setTimeout(hide, 650);
+        });
+        this._updateBrightnessBubble(slider, false);
+    }
     // Find the editor row associated with one light entity id.
     _findLightRow(eid) {
         return Array.from(this.shadowRoot.querySelectorAll(".light-row")).find(row => row.dataset.entityId === eid);
@@ -1086,6 +1125,7 @@ class SceneManagerCard extends HTMLElement {
         row.dataset.desiredState = nextState;
         row.dataset.brightnessPct = String(nextState === "on" ? (safePct > 0 ? safePct : 100) : 0);
         slider.value = row.dataset.brightnessPct;
+        this._updateBrightnessBubble(slider);
         if (nextState === "on") toggle.classList.add("on"); else toggle.classList.remove("on");
         if (cb && nextState === "on") {
             cb.checked = true;
@@ -1189,11 +1229,12 @@ class SceneManagerCard extends HTMLElement {
                 if (!this._useManualLights()) lights.sort();
                 lights.forEach(eid => {
                     const row = document.createElement("div"); row.className = "light-row"; row.dataset.entityId = eid;
-                    row.innerHTML = `<input type="checkbox" class="light-select" data-entity="${eid}"><div class="light-name">...</div><input type="range" min="0" max="100" class="brightness-slider"><div class="light-toggle"><ha-icon icon="mdi:power"></ha-icon></div>`;
+                    row.innerHTML = `<input type="checkbox" class="light-select" data-entity="${eid}"><div class="light-name">...</div><div class="brightness-control"><input type="range" min="0" max="100" class="brightness-slider" aria-label="Niveau de luminosité"><output class="brightness-value">0%</output></div><div class="light-toggle"><ha-icon icon="mdi:power"></ha-icon></div>`;
                     const cb = row.querySelector(".light-select");
                     cb.addEventListener("change", () => { const all = container.querySelectorAll(".light-select"); const checked = container.querySelectorAll(".light-select:checked"); masterCheck.checked = checked.length > 0; masterCheck.indeterminate = checked.length > 0 && checked.length < all.length; });
                     const toggleControl = row.querySelector(".light-toggle");
                     const slider = row.querySelector(".brightness-slider");
+                    this._bindBrightnessBubble(slider);
                     toggleControl.addEventListener("click", () => {
                         if (!this._liveModeEnabled()) {
                             const isOn = row.dataset.desiredState === "on" || toggleControl.classList.contains("on");
@@ -1267,6 +1308,7 @@ class SceneManagerCard extends HTMLElement {
                 row.dataset.brightnessPct = String(isOn ? brightness : 0);
             }
             slider.value = row.dataset.desiredState === "on" ? Number(row.dataset.brightnessPct || brightness || 100) : 0;
+            this._updateBrightnessBubble(slider);
             if (row.dataset.desiredState === "on") toggle.classList.add("on"); else toggle.classList.remove("on");
             if (firstRun && !this.editingId && !this._useManualLights() && this.config.auto_select_lights !== false) { if (eid.includes(this.currentRoom) && isOn) { const cb = row.querySelector(".light-select"); cb.checked = true; cb.dispatchEvent(new Event("change")); } }
         });

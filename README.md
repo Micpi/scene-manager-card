@@ -2,7 +2,7 @@
 
 Scene Manager Card est la carte Lovelace pour piloter **Scene Manager Ultimate**. Elle est publiee separement de l'integration afin de pouvoir mettre a jour l'interface via HACS sans mettre a jour le backend.
 
-![Version](https://img.shields.io/badge/version-1.1.13-blue)
+![Version](https://img.shields.io/badge/version-1.1.14-blue)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Card-orange)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Lovelace-41BDF5)
 
@@ -39,6 +39,7 @@ Depuis `v1.1.10`, la carte conserve localement l'ordre et les metadonnees sauveg
 Depuis `v1.1.11`, la carte envoie aussi l'entite originale et sa position au backend pour empecher definitivement une scene modifiee de repartir en fin de liste apres rafraichissement.
 Depuis `v1.1.12`, les categories de l'editeur graphique sont repliables et les pieces manuelles peuvent etre reordonnees par glisser-deposer ou avec les boutons monter/descendre.
 Depuis `v1.1.13`, chaque piece manuelle peut aussi etre repliee individuellement; son etat replie suit la piece lors d'un reordonnancement.
+Depuis `v1.1.14`, une bulle affiche le niveau de luminosite en pourcentage pendant le reglage de chaque slider, a la souris, au toucher ou au clavier.
 
 ## Configuration rapide
 
