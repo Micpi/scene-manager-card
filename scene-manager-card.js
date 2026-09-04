@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.11
+// Version: 1.1.12
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Card version displayed in the browser console and aligned with HACS releases.
-const VERSION = '1.1.11';
+const VERSION = '1.1.12';
 
 // Backend registry sensor that exposes metadata, scene order, and live mode state.
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
@@ -1621,6 +1621,12 @@ class SceneManagerEditor extends HTMLElement {
         // Whether the editor already gave up waiting for the picker in this render cycle.
         this._pickerWaitDone = false;
 
+        // Keep collapsed editor categories stable while Home Assistant re-renders the form.
+        this._collapsedSections = new Set();
+
+        // Track the active drag type so room and light drop zones do not conflict.
+        this._dragKind = null;
+
         // Watch for ha-entity-picker availability to trigger re-render when it loads
         if (window.customElements && !customElements.get('ha-entity-picker')) {
             customElements.whenDefined('ha-entity-picker').then(() => {
@@ -1676,6 +1682,24 @@ class SceneManagerEditor extends HTMLElement {
     _removeRoom(roomIndex) {
         const rooms = this._getManualRooms();
         rooms.splice(roomIndex, 1);
+        this._setManualRooms(rooms);
+    }
+
+    // Move a manual room one position in either direction.
+    _moveRoom(roomIndex, offset) {
+        const rooms = this._getManualRooms();
+        const targetIndex = roomIndex + offset;
+        if (roomIndex < 0 || roomIndex >= rooms.length || targetIndex < 0 || targetIndex >= rooms.length) return;
+        [rooms[roomIndex], rooms[targetIndex]] = [rooms[targetIndex], rooms[roomIndex]];
+        this._setManualRooms(rooms);
+    }
+
+    // Persist a manual room move after drag-and-drop.
+    _reorderRooms(oldIndex, newIndex) {
+        const rooms = this._getManualRooms();
+        if (oldIndex < 0 || oldIndex >= rooms.length || newIndex < 0 || newIndex >= rooms.length || oldIndex === newIndex) return;
+        const [movedRoom] = rooms.splice(oldIndex, 1);
+        rooms.splice(newIndex, 0, movedRoom);
         this._setManualRooms(rooms);
     }
 
@@ -1745,8 +1769,10 @@ class SceneManagerEditor extends HTMLElement {
 
     // Start drag-and-drop for manual light reorder.
     _dragStart(e) {
+        this._dragKind = 'light';
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', JSON.stringify({
+            type: 'light',
             roomIndex: e.target.dataset.roomIndex,
             lightIndex: e.target.dataset.lightIndex
         }));
@@ -1769,9 +1795,14 @@ class SceneManagerEditor extends HTMLElement {
 
     // Clear manual light drag styling after drag completion.
     _dragEnd(e) {
+        this._dragKind = null;
         this.shadowRoot.querySelectorAll('.light-row').forEach(row => {
             row.classList.remove('dragging');
             row.classList.remove('over');
+        });
+        this.shadowRoot.querySelectorAll('.room-block').forEach(room => {
+            room.classList.remove('dragging');
+            room.classList.remove('over');
         });
     }
 
@@ -1808,6 +1839,48 @@ class SceneManagerEditor extends HTMLElement {
         room.lights = lights;
         rooms[roomIndex] = room;
         this._setManualRooms(rooms);
+    }
+
+    // Start drag-and-drop for manual room reorder from its dedicated handle.
+    _roomDragStart(e) {
+        this._dragKind = 'room';
+        const handle = e.currentTarget;
+        const roomIndex = Number(handle.dataset.roomIndex);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'room', roomIndex }));
+        const roomBlock = handle.closest('.room-block');
+        if (roomBlock) roomBlock.classList.add('dragging');
+    }
+
+    // Highlight a room as a valid room drop target.
+    _roomDragOver(e) {
+        if (this._dragKind !== 'room') return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        e.currentTarget.classList.add('over');
+    }
+
+    // Clear room drop target styling.
+    _roomDragLeave(e) {
+        e.currentTarget.classList.remove('over');
+    }
+
+    // Reorder manual rooms after a drop.
+    _roomDrop(e) {
+        if (this._dragKind !== 'room') return;
+        e.preventDefault();
+        e.stopPropagation();
+        let data;
+        try {
+            data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        } catch (error) {
+            return;
+        }
+        if (!data || data.type !== 'room') return;
+        const oldIndex = Number(data.roomIndex);
+        const newIndex = Number(e.currentTarget.dataset.roomIndex);
+        if (Number.isNaN(oldIndex) || Number.isNaN(newIndex)) return;
+        this._reorderRooms(oldIndex, newIndex);
     }
 
     // Capture focused editor control and cursor selection before re-render.
@@ -1929,12 +2002,26 @@ class SceneManagerEditor extends HTMLElement {
                             </div>
                         `).join('');
 
+            const roomLabel = room.name || room.id || `Pièce ${ri + 1}`;
+            const safeRoomLabel = String(roomLabel)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
             return `
-                            <div class="room-block">
+                            <div class="room-block" data-room-index="${ri}">
+                                <div class="room-header">
+                                    <div class="room-drag-handle" draggable="true" data-room-index="${ri}" title="Déplacer ${safeRoomLabel}" aria-label="Déplacer ${safeRoomLabel}"><ha-icon icon="mdi:drag"></ha-icon></div>
+                                    <div class="room-title">${safeRoomLabel}</div>
+                                    <div class="room-actions">
+                                        <button class="icon-btn" type="button" data-action="move-room-up" data-room-index="${ri}" title="Monter la pièce" aria-label="Monter la pièce" ${ri === 0 ? 'disabled' : ''}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+                                        <button class="icon-btn" type="button" data-action="move-room-down" data-room-index="${ri}" title="Descendre la pièce" aria-label="Descendre la pièce" ${ri === rooms.length - 1 ? 'disabled' : ''}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+                                        <button class="icon-btn danger" type="button" data-action="remove-room" data-room-index="${ri}" title="Supprimer la pièce" aria-label="Supprimer la pièce"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
+                                    </div>
+                                </div>
                                 <div class="row">
                                     <div class="label">Id pièce</div>
                                     <input type="text" class="room-input" data-room-index="${ri}" data-field="id" value="${(room.id || '').replace(/\"/g, '&quot;')}" placeholder="ex: salon">
-                                    <button class="icon-btn danger" type="button" data-action="remove-room" data-room-index="${ri}" title="Supprimer la pièce" aria-label="Supprimer la pièce"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
                                 </div>
                                 <div class="row">
                                     <div class="label">Nom</div>
@@ -1951,13 +2038,25 @@ class SceneManagerEditor extends HTMLElement {
         this.shadowRoot.innerHTML = `
       <style>
         .card-config { display: flex; flex-direction: column; gap: 20px; padding: 10px; }
-        .option-group { border: 1px solid var(--divider-color, #ccc); border-radius: 8px; padding: 16px; }
-        h3 { margin-top: 0; margin-bottom: 16px; border-bottom: 1px solid var(--divider-color, #ccc); padding-bottom: 8px; color: var(--primary-text-color); }
+        .option-group { border: 1px solid var(--divider-color, #ccc); border-radius: 8px; overflow: hidden; }
+        .option-group summary { display: flex; align-items: center; gap: 8px; padding: 16px; color: var(--primary-text-color); font-size: 1.17em; font-weight: 600; cursor: pointer; list-style: none; user-select: none; }
+        .option-group summary::-webkit-details-marker { display: none; }
+        .option-group summary::before { content: ''; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.2s ease; }
+        .option-group[open] summary::before { transform: rotate(45deg); }
+        .option-group[open] summary { border-bottom: 1px solid var(--divider-color, #ccc); }
+        .option-content { padding: 16px 16px 4px; }
         .row { display: flex; align-items: center; gap: 15px; margin-bottom: 12px; flex-wrap: wrap; }
         .label { flex: 0 0 140px; font-weight: 500; color: var(--primary-text-color); }
                 input, select, textarea { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); box-sizing: border-box; }
                 textarea { min-height: 110px; resize: vertical; font-family: var(--paper-font-body1_-_font-family); }
-                .room-block { border: 1px dashed var(--divider-color, #ccc); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+                .room-block { border: 1px dashed var(--divider-color, #ccc); border-radius: 8px; padding: 12px; margin-bottom: 12px; transition: opacity 0.2s ease, border-color 0.2s ease, transform 0.2s ease; }
+            .room-block.dragging { opacity: 0.5; }
+            .room-block.over { border-top: 3px solid var(--primary-color); transform: translateY(2px); }
+            .room-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--divider-color, #ccc); }
+            .room-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--primary-text-color); }
+            .room-actions { display: flex; gap: 6px; }
+            .room-drag-handle { cursor: grab; padding: 6px; display: flex; align-items: center; color: var(--secondary-text-color); touch-action: none; }
+            .room-drag-handle:active { cursor: grabbing; }
             .room-block .label { flex: 1 1 100%; }
             input, select, textarea, ha-entity-picker { min-width: 220px; }
             .light-row ha-entity-picker, .light-row .light-input, .light-row .light-select { flex: 1; min-height: 40px; }
@@ -1976,8 +2075,9 @@ class SceneManagerEditor extends HTMLElement {
         .drag-handle { cursor: grab; padding: 0 8px; display: flex; align-items: center; color: var(--secondary-text-color); }
       </style>
       <div class="card-config">
-        <div class="option-group">
-            <h3>Configuration</h3>
+        <details class="option-group" data-section="configuration" ${this._collapsedSections.has('configuration') ? '' : 'open'}>
+          <summary>Configuration</summary>
+          <div class="option-content">
             <div class="row"><div class="label">Titre</div><input type="text" id="title" value="${this._config.title || ''}"></div>
             <div class="row"><div class="label">Icône Titre</div><ha-icon-picker id="icon" value="${this._config.icon || 'mdi:home-floor-1'}"></ha-icon-picker></div>
             <div class="row"><div class="label">Afficher Titre</div><input type="checkbox" id="show_title" ${this._config.show_title === false ? '' : 'checked'}></div>
@@ -1987,25 +2087,31 @@ class SceneManagerEditor extends HTMLElement {
             <div class="row"><div class="label">Préfixe scènes</div><input type="text" id="scene_prefix" value="${this._config.scene_prefix || ''}" placeholder="Optionnel (ex: soir)"></div>
             <div class="row"><div class="label">Afficher vide</div><input type="checkbox" id="show_empty" ${this._config.show_empty === false ? '' : 'checked'}></div>
             <div class="row"><div class="label">Message vide</div><input type="text" id="empty_text" value="${this._config.empty_text || 'Aucune scène'}"></div>
-        </div>
-        <div class="option-group">
-            <h3>Lumières</h3>
+          </div>
+        </details>
+        <details class="option-group" data-section="lights" ${this._collapsedSections.has('lights') ? '' : 'open'}>
+          <summary>Lumières</summary>
+          <div class="option-content">
             <div class="row"><div class="label">Mode Manuel</div><input type="checkbox" id="manual_lights" ${this._config.manual_lights ? 'checked' : ''}></div>
             <div class="row"><div class="label">Sélection auto</div><input type="checkbox" id="auto_select_lights" ${this._config.auto_select_lights === false ? '' : 'checked'}></div>
                         <div id="manual_rooms_container" style="display:${this._config.manual_lights ? 'block' : 'none'}">
                             ${roomsHtml || '<div class="row"><div class="label"></div><div style="flex:1;color:var(--secondary-text-color);">Aucune pièce configurée.</div></div>'}
                             <div class="row"><div class="label"></div><button class="icon-btn" type="button" data-action="add-room" title="Ajouter une pièce" aria-label="Ajouter une pièce"><ha-icon icon="mdi:plus"></ha-icon></button></div>
                         </div>
-        </div>
-        <div class="option-group">
-            <h3>Mode live</h3>
+          </div>
+        </details>
+        <details class="option-group" data-section="live" ${this._collapsedSections.has('live') ? '' : 'open'}>
+          <summary>Mode live</summary>
+          <div class="option-content">
             <div class="row"><div class="label">Respecter switch</div><input type="checkbox" id="respect_live_mode" ${this._config.respect_live_mode === false ? '' : 'checked'}></div>
             <div class="row"><div class="label">Switch live</div>${useEntityPicker ? `<ha-entity-picker id="live_mode_entity" value="${this._config.live_mode_entity || DEFAULT_LIVE_MODE_ENTITY_ID}"></ha-entity-picker>` : `<input type="text" id="live_mode_entity" value="${this._config.live_mode_entity || DEFAULT_LIVE_MODE_ENTITY_ID}" placeholder="${DEFAULT_LIVE_MODE_ENTITY_ID}">`}</div>
             <div class="row"><div class="label">Source action</div><input type="text" id="action_source" value="${this._config.action_source || 'card'}"></div>
             <div class="row"><div class="label">Fallback scène</div><input type="checkbox" id="fallback_to_scene_service" ${this._config.fallback_to_scene_service === false ? '' : 'checked'}></div>
-        </div>
-        <div class="option-group">
-            <h3>Apparence</h3>
+          </div>
+        </details>
+        <details class="option-group" data-section="appearance" ${this._collapsedSections.has('appearance') ? '' : 'open'}>
+          <summary>Apparence</summary>
+          <div class="option-content">
             <div class="row"><div class="label">Style Bouton</div><select id="button_style"><option value="filled" ${this._config.button_style === 'filled' ? 'selected' : ''}>Plein (Filled)</option><option value="outline" ${this._config.button_style === 'outline' ? 'selected' : ''}>Contour (Outline)</option><option value="ghost" ${this._config.button_style === 'ghost' ? 'selected' : ''}>Transparent (Ghost)</option></select></div>
             <div class="row"><div class="label">Forme Bouton</div><select id="button_shape"><option value="rounded" ${this._config.button_shape === 'rounded' ? 'selected' : ''}>Arrondi</option><option value="box" ${this._config.button_shape === 'box' ? 'selected' : ''}>Carré</option><option value="circle" ${this._config.button_shape === 'circle' ? 'selected' : ''}>Rond</option></select></div>
             <div class="row"><div class="label">Alignement</div><select id="scene_alignment"><option value="left" ${this._config.scene_alignment === 'left' ? 'selected' : ''}>Gauche</option><option value="center" ${this._config.scene_alignment === 'center' ? 'selected' : ''}>Centre</option><option value="right" ${this._config.scene_alignment === 'right' ? 'selected' : ''}>Droite</option></select></div>
@@ -2016,9 +2122,11 @@ class SceneManagerEditor extends HTMLElement {
             <div class="row"><div class="label">Couleur bouton</div><input type="color" id="button_bg_color" value="${this._config.button_bg_color || '#eeeeee'}"><span class="color-preview" data-for="button_bg_color" style="background-color:${this._config.button_bg_color || '#eeeeee'};"></span><button class="reset-btn" data-for="button_bg_color" title="Réinitialiser" aria-label="Réinitialiser"><ha-icon icon="mdi:restore"></ha-icon></button></div>
             <div class="row"><div class="label">Couleur icône</div><input type="color" id="button_icon_color" value="${this._config.button_icon_color || '#000000'}"><span class="color-preview" data-for="button_icon_color" style="background-color:${this._config.button_icon_color || '#000000'};"></span><button class="reset-btn" data-for="button_icon_color" title="Réinitialiser" aria-label="Réinitialiser"><ha-icon icon="mdi:restore"></ha-icon></button></div>
             <div class="row"><div class="label">Couleur texte</div><input type="color" id="button_text_color" value="${this._config.button_text_color || '#000000'}"><span class="color-preview" data-for="button_text_color" style="background-color:${this._config.button_text_color || '#000000'};"></span><button class="reset-btn" data-for="button_text_color" title="Réinitialiser" aria-label="Réinitialiser"><ha-icon icon="mdi:restore"></ha-icon></button></div>
-        </div>
-        <div class="option-group">
-            <h3>Dimensions</h3>
+          </div>
+        </details>
+        <details class="option-group" data-section="dimensions" ${this._collapsedSections.has('dimensions') ? '' : 'open'}>
+          <summary>Dimensions</summary>
+          <div class="option-content">
             <div class="row"><div class="label">Largeur</div><input type="text" id="button_width" value="${this._config.button_width || '100px'}"></div>
             <div class="row"><div class="label">Hauteur</div><input type="text" id="button_height" value="${this._config.button_height || '80px'}"></div>
                         <div class="row"><div class="label">Rayon boutons</div><input type="range" id="button_border_radius" min="0" max="40" value="${this._config.button_border_radius || 16}"></div>
@@ -2026,9 +2134,18 @@ class SceneManagerEditor extends HTMLElement {
                         <div class="row"><div class="label">Rayon carte</div><input type="range" id="card_border_radius" min="0" max="32" value="${this._config.card_border_radius || 12}"></div>
                         <div class="row"><div class="label">Espacement</div><input type="range" id="button_spacing" min="0" max="30" value="${this._config.button_spacing || 12}"></div>
                         <div class="row"><div class="label">Transition</div><input type="range" id="activation_transition" min="0" max="10" step="0.5" value="${this._config.activation_transition ?? 2}"></div>
-        </div>
+          </div>
+        </details>
       </div>
     `;
+        // Remember collapsed categories across config updates and editor re-renders.
+        this.shadowRoot.querySelectorAll('details.option-group[data-section]').forEach(section => {
+            section.addEventListener('toggle', () => {
+                const sectionId = section.dataset.section;
+                if (section.open) this._collapsedSections.delete(sectionId);
+                else this._collapsedSections.add(sectionId);
+            });
+        });
         this.shadowRoot.querySelectorAll("input[type='color']").forEach(el => {
             el.addEventListener("change", (e) => {
                 const newConfig = { ...this._config };
@@ -2236,6 +2353,8 @@ class SceneManagerEditor extends HTMLElement {
                 const lightIndex = Number(e.currentTarget.dataset.lightIndex);
                 if (action === 'add-room') return this._addRoom();
                 if (action === 'remove-room') return this._removeRoom(roomIndex);
+                if (action === 'move-room-up') return this._moveRoom(roomIndex, -1);
+                if (action === 'move-room-down') return this._moveRoom(roomIndex, 1);
                 if (action === 'add-light') return this._addLight(roomIndex);
                 if (action === 'remove-light') return this._removeLight(roomIndex, lightIndex);
             }, { passive: true });
@@ -2248,6 +2367,17 @@ class SceneManagerEditor extends HTMLElement {
             row.addEventListener('dragleave', this._dragLeave.bind(this));
             row.addEventListener('drop', this._drop.bind(this));
             row.addEventListener('dragend', this._dragEnd.bind(this));
+        });
+
+        // Manual rooms: drag-and-drop from the room header handle.
+        this.shadowRoot.querySelectorAll('.room-drag-handle').forEach(handle => {
+            handle.addEventListener('dragstart', this._roomDragStart.bind(this));
+            handle.addEventListener('dragend', this._dragEnd.bind(this));
+        });
+        this.shadowRoot.querySelectorAll('.room-block').forEach(room => {
+            room.addEventListener('dragover', this._roomDragOver.bind(this));
+            room.addEventListener('dragleave', this._roomDragLeave.bind(this));
+            room.addEventListener('drop', this._roomDrop.bind(this));
         });
 
         // Restore focus/cursor after re-render (prevents losing focus on each keystroke)
