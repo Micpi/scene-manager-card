@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.1.12
+// Version: 1.1.13
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Card version displayed in the browser console and aligned with HACS releases.
-const VERSION = '1.1.12';
+const VERSION = '1.1.13';
 
 // Backend registry sensor that exposes metadata, scene order, and live mode state.
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
@@ -1624,6 +1624,9 @@ class SceneManagerEditor extends HTMLElement {
         // Keep collapsed editor categories stable while Home Assistant re-renders the form.
         this._collapsedSections = new Set();
 
+        // Keep individual room panels collapsed while their configuration changes.
+        this._collapsedRooms = new Set();
+
         // Track the active drag type so room and light drop zones do not conflict.
         this._dragKind = null;
 
@@ -1681,8 +1684,41 @@ class SceneManagerEditor extends HTMLElement {
     // Remove one manual room block by index.
     _removeRoom(roomIndex) {
         const rooms = this._getManualRooms();
+        if (roomIndex < 0 || roomIndex >= rooms.length) return;
         rooms.splice(roomIndex, 1);
+        const collapsed = Array.from({ length: rooms.length + 1 }, (_, index) => this._collapsedRooms.has(index));
+        collapsed.splice(roomIndex, 1);
+        this._collapsedRooms = new Set(collapsed.flatMap((isCollapsed, index) => isCollapsed ? [index] : []));
         this._setManualRooms(rooms);
+    }
+
+    // Move the collapsed state together with a room when its position changes.
+    _reorderCollapsedRoomState(oldIndex, newIndex, roomCount) {
+        const collapsed = Array.from({ length: roomCount }, (_, index) => this._collapsedRooms.has(index));
+        const [movedState] = collapsed.splice(oldIndex, 1);
+        collapsed.splice(newIndex, 0, movedState);
+        this._collapsedRooms = new Set(collapsed.flatMap((isCollapsed, index) => isCollapsed ? [index] : []));
+    }
+
+    // Toggle one room panel without changing the card configuration.
+    _toggleRoom(roomIndex) {
+        if (Number.isNaN(roomIndex)) return;
+        const shouldCollapse = !this._collapsedRooms.has(roomIndex);
+        if (shouldCollapse) this._collapsedRooms.add(roomIndex);
+        else this._collapsedRooms.delete(roomIndex);
+
+        if (!this.shadowRoot) return;
+        const roomBlock = this.shadowRoot.querySelector(`.room-block[data-room-index="${roomIndex}"]`);
+        if (!roomBlock) return;
+        roomBlock.classList.toggle('collapsed', shouldCollapse);
+        const content = roomBlock.querySelector('.room-content');
+        if (content) content.hidden = shouldCollapse;
+        const toggle = roomBlock.querySelector('[data-action="toggle-room"]');
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', String(!shouldCollapse));
+            const icon = toggle.querySelector('ha-icon');
+            if (icon) icon.setAttribute('icon', shouldCollapse ? 'mdi:chevron-right' : 'mdi:chevron-down');
+        }
     }
 
     // Move a manual room one position in either direction.
@@ -1691,6 +1727,7 @@ class SceneManagerEditor extends HTMLElement {
         const targetIndex = roomIndex + offset;
         if (roomIndex < 0 || roomIndex >= rooms.length || targetIndex < 0 || targetIndex >= rooms.length) return;
         [rooms[roomIndex], rooms[targetIndex]] = [rooms[targetIndex], rooms[roomIndex]];
+        this._reorderCollapsedRoomState(roomIndex, targetIndex, rooms.length);
         this._setManualRooms(rooms);
     }
 
@@ -1700,6 +1737,7 @@ class SceneManagerEditor extends HTMLElement {
         if (oldIndex < 0 || oldIndex >= rooms.length || newIndex < 0 || newIndex >= rooms.length || oldIndex === newIndex) return;
         const [movedRoom] = rooms.splice(oldIndex, 1);
         rooms.splice(newIndex, 0, movedRoom);
+        this._reorderCollapsedRoomState(oldIndex, newIndex, rooms.length);
         this._setManualRooms(rooms);
     }
 
@@ -2008,17 +2046,22 @@ class SceneManagerEditor extends HTMLElement {
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;');
+            const roomCollapsed = this._collapsedRooms.has(ri);
             return `
-                            <div class="room-block" data-room-index="${ri}">
+                            <div class="room-block${roomCollapsed ? ' collapsed' : ''}" data-room-index="${ri}">
                                 <div class="room-header">
                                     <div class="room-drag-handle" draggable="true" data-room-index="${ri}" title="Déplacer ${safeRoomLabel}" aria-label="Déplacer ${safeRoomLabel}"><ha-icon icon="mdi:drag"></ha-icon></div>
-                                    <div class="room-title">${safeRoomLabel}</div>
+                                    <button class="room-toggle" type="button" data-action="toggle-room" data-room-index="${ri}" aria-expanded="${roomCollapsed ? 'false' : 'true'}" title="${roomCollapsed ? 'Déplier' : 'Replier'} ${safeRoomLabel}">
+                                        <ha-icon icon="${roomCollapsed ? 'mdi:chevron-right' : 'mdi:chevron-down'}"></ha-icon>
+                                        <span class="room-title">${safeRoomLabel}</span>
+                                    </button>
                                     <div class="room-actions">
                                         <button class="icon-btn" type="button" data-action="move-room-up" data-room-index="${ri}" title="Monter la pièce" aria-label="Monter la pièce" ${ri === 0 ? 'disabled' : ''}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
                                         <button class="icon-btn" type="button" data-action="move-room-down" data-room-index="${ri}" title="Descendre la pièce" aria-label="Descendre la pièce" ${ri === rooms.length - 1 ? 'disabled' : ''}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
                                         <button class="icon-btn danger" type="button" data-action="remove-room" data-room-index="${ri}" title="Supprimer la pièce" aria-label="Supprimer la pièce"><ha-icon icon="mdi:delete-outline"></ha-icon></button>
                                     </div>
                                 </div>
+                                <div class="room-content" ${roomCollapsed ? 'hidden' : ''}>
                                 <div class="row">
                                     <div class="label">Id pièce</div>
                                     <input type="text" class="room-input" data-room-index="${ri}" data-field="id" value="${(room.id || '').replace(/\"/g, '&quot;')}" placeholder="ex: salon">
@@ -2031,6 +2074,7 @@ class SceneManagerEditor extends HTMLElement {
                                 <div class="row">
                                     <div class="label"></div>
                                     <button class="icon-btn" type="button" data-action="add-light" data-room-index="${ri}" title="Ajouter une lumière" aria-label="Ajouter une lumière"><ha-icon icon="mdi:plus"></ha-icon></button>
+                                </div>
                                 </div>
                             </div>
                         `;
@@ -2053,6 +2097,10 @@ class SceneManagerEditor extends HTMLElement {
             .room-block.dragging { opacity: 0.5; }
             .room-block.over { border-top: 3px solid var(--primary-color); transform: translateY(2px); }
             .room-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--divider-color, #ccc); }
+            .room-block.collapsed .room-header { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+            .room-content[hidden] { display: none; }
+            .room-toggle { min-width: 0; flex: 1; display: flex; align-items: center; gap: 4px; padding: 6px 0; border: 0; background: transparent; color: var(--primary-text-color); cursor: pointer; text-align: left; }
+            .room-toggle ha-icon { flex: 0 0 auto; color: var(--secondary-text-color); }
             .room-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--primary-text-color); }
             .room-actions { display: flex; gap: 6px; }
             .room-drag-handle { cursor: grab; padding: 6px; display: flex; align-items: center; color: var(--secondary-text-color); touch-action: none; }
@@ -2352,6 +2400,7 @@ class SceneManagerEditor extends HTMLElement {
                 const roomIndex = Number(e.currentTarget.dataset.roomIndex);
                 const lightIndex = Number(e.currentTarget.dataset.lightIndex);
                 if (action === 'add-room') return this._addRoom();
+                if (action === 'toggle-room') return this._toggleRoom(roomIndex);
                 if (action === 'remove-room') return this._removeRoom(roomIndex);
                 if (action === 'move-room-up') return this._moveRoom(roomIndex, -1);
                 if (action === 'move-room-down') return this._moveRoom(roomIndex, 1);
